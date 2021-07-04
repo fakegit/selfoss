@@ -15,6 +15,13 @@
 - Added option `reading_speed_wpm` for showing estimated reading time. ([#1232](https://github.com/fossar/selfoss/pull/1232))
 - Search query is now part of URL. ([#1216](https://github.com/fossar/selfoss/pull/1216))
 - Search will be carried out using regular expressions when the search query is wrapped in forward slashes, e.g. `/regex/`. The expression syntax is database specific. ([#1205](https://github.com/fossar/selfoss/pull/1205))
+- YouTube spout now supports following playlists. ([#1260](https://github.com/fossar/selfoss/pull/1260))
+- Translations into several new languages were added:
+  - English (United Kingdom): `en-GB`
+  - French (Canada): `fr-CA`
+  - Hebrew: `he`
+  - Indonesian: `id`
+  - Portuguese (European): `pt`
 
 ### Bug fixes
 - Reddit spout allows wider range of URLs, including absolute URLs and searches ([#1033](https://github.com/fossar/selfoss/pull/1033))
@@ -27,6 +34,7 @@
 - Fixed loading full text on pages containing ampersands in URLs ([#1188](https://github.com/fossar/selfoss/pull/1188))
 - Fixed missing styling in article contents ([#1221](https://github.com/fossar/selfoss/pull/1221))
 - Golem, Lightreading and Heise spouts now use Graby for extracting article contents instead of our own defunct extraction rules. ([#1245](https://github.com/fossar/selfoss/pull/1245))
+- The tag colour picker now pre-selects the current colour instead of a placeholder colour. ([#1269](https://github.com/fossar/selfoss/pull/1269))
 
 ### API changes
 - `tags` attribute is now consistently array of strings, numbers are numbers and booleans are booleans. **This might break third-party clients that have not updated yet.** ([#948](https://github.com/fossar/selfoss/pull/948))
@@ -69,6 +77,8 @@
   * Traditional Chinese `zh-TW`
   * Norwegian Bokmål `nb`
   * Swedish `sv`
+- Wallabag sharer now targets Wallabag 2 by default. This is potentially breaking change but hopefully, no one uses Wallabag 1 any more. ([#1261](https://github.com/fossar/selfoss/pull/1261))
+- `defaults.ini` file is no longer used, it is only provided for convenience under a new name `config-example.ini` ([#1261](https://github.com/fossar/selfoss/pull/1261), [#1267](https://github.com/fossar/selfoss/pull/1267))
 
 ### Other changes
 - The front-end has been modernized using React framework, this will greatly simplify future development. ([#1216](https://github.com/fossar/selfoss/pull/1216))
@@ -94,6 +104,7 @@
 - Placeholders are now used for images before they are loaded to avoid content jumping around ([#1204](https://github.com/fossar/selfoss/pull/1204))
 - Search button is now always on the screen, avoiding the need to scroll to top to be able to use it. ([#1231](https://github.com/fossar/selfoss/issues/1231))
 - Button for opening articles, tags, sources and filters in the sidebar, as well as the source and tag links in articles are now real links, allowing to open them in a new tab by middle-clicking them. ([#1216](https://github.com/fossar/selfoss/issues/1216), [#695](https://github.com/fossar/selfoss/issues/695))
+- Configuration is no longer managed by F3 framework. ([#1261](https://github.com/fossar/selfoss/pull/1261))
 
 
 ## 2.18 – 2018-03-05

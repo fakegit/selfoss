@@ -20,12 +20,12 @@ selfoss.dbOffline = {
         return selfoss.db.storage.transaction
             .apply(selfoss.db.storage, arguments)
             .catch(function(error) {
-                selfoss.ui.showError(
-                    selfoss.ui._('error_offline_storage', [error.message])
+                selfoss.app.showError(
+                    selfoss.app._('error_offline_storage', [error.message])
                 );
                 selfoss.db.broken = true;
                 selfoss.db.enableOffline.update(false);
-                selfoss.entries?.reloadList();
+                selfoss.entries?.reload();
 
                 // If this is a QuotaExceededError, garbage collect more
                 // entries and hope it helps.
@@ -104,7 +104,7 @@ selfoss.dbOffline = {
                 window.addEventListener('offline', function() {
                     selfoss.db.setOffline().catch((error) => {
                         if (error instanceof OfflineStorageNotAvailableError) {
-                            selfoss.ui.showError(selfoss.ui._('error_offline_storage_not_available', [
+                            selfoss.app.showError(selfoss.app._('error_offline_storage_not_available', [
                                 '<a href="https://caniuse.com/#feat=indexeddb">',
                                 '</a>'
                             ]));
@@ -114,7 +114,7 @@ selfoss.dbOffline = {
                     });
                 });
 
-                selfoss.ui.setOnline();
+                selfoss.app.setOfflineState(false);
                 selfoss.db.tryOnline()
                     .then(function() {
                         selfoss.reloadTags();
@@ -234,7 +234,7 @@ selfoss.dbOffline = {
     },
 
 
-    reloadList: function(fetchParams) {
+    getEntries: function(fetchParams) {
         let hasMore = false;
         return selfoss.dbOffline._tr('r', selfoss.db.storage.entries,
             function() {
@@ -338,7 +338,7 @@ selfoss.dbOffline = {
                         offlineCounts.starred = offlineCounts.starred + 1;
                     }
                 }).then(function() {
-                    selfoss.ui.refreshOfflineCounts(offlineCounts);
+                    selfoss.app.refreshOfflineCounts(offlineCounts);
                 });
             });
     },

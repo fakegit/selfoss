@@ -16,7 +16,7 @@ if (newVersion.search(/^\d+\.\d+(\-SNAPSHOT|\-[0-9a-f]+)?$/) === -1) {
 const sources = [
     'package.json',
     'README.md',
-    'src/common.php',
+    'src/constants.php',
     'docs/config.toml'
 ];
 
@@ -33,10 +33,10 @@ const replacements = [
         to: "# selfoss " + newVersion
     },
 
-    // rule for src/common.php
+    // rule for src/constants.php
     {
-        from: /'version', '\d+\.\d+(\-SNAPSHOT|\-[0-9a-f]+)?'/,
-        to: "'version', '" + newVersion + "'"
+        from: /SELFOSS_VERSION = '\d+\.\d+(\-SNAPSHOT|\-[0-9a-f]+)?'/,
+        to: "SELFOSS_VERSION = '" + newVersion + "'"
     },
 
     // rule for docs/config.toml

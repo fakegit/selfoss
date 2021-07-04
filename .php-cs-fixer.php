@@ -16,24 +16,25 @@ $rules = [
     'phpdoc_align' => false,
     'phpdoc_no_empty_return' => false,
     'phpdoc_summary' => false,
-    'trailing_comma_in_multiline_array' => false,
-    'yoda_style' => null,
+    'trailing_comma_in_multiline' => false,
+    'yoda_style' => false,
     'semicolon_after_instruction' => false,
     // additional rules
     'array_syntax' => ['syntax' => 'short'],
     'dir_constant' => true,
     'echo_tag_syntax' => ['format' => 'short'],
-    'is_null' => ['use_yoda_style' => false],
     'modernize_types_casting' => true,
     'no_alias_functions' => true,
     'ordered_imports' => true,
     'phpdoc_add_missing_param_annotation' => ['only_untyped' => false],
     'phpdoc_order' => true,
-    'psr4' => true,
+    'psr_autoloading' => true,
     'strict_param' => true,
 ];
 
-return PhpCsFixer\Config::create()
+$config = new PhpCsFixer\Config();
+
+return $config
     ->setRules($rules)
     ->setRiskyAllowed(true)
     ->setFinder($finder);

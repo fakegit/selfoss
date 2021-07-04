@@ -1,6 +1,6 @@
 # This file lints the code, runs tests, builds a package and then deploys it.
 # The following secrets need to be set:
-# - “BINTRAY_API_KEY” for pushing built package to Bintray
+# - “CLOUDSMITH_API_KEY” for pushing built package to Cloudsmith
 # - “CACHIX_AUTH_TOKEN” for uploading built Nix packages to Cachix
 name: CI
 
@@ -138,37 +138,31 @@ jobs:
           if-no-files-found: error
           path: ${{ steps.zipball.outputs.file_name }}
 
-      - name: Upload the zipball to Bintray
-        uses: bpicode/github-action-upload-bintray@7c33b56d01c41301a3346f2fd9af590cb1c81899
+      - name: Upload the zipball to Cloudsmith
+        uses: cloudsmith-io/action@v0.5.2
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         with:
+          api-key: ${{ secrets.CLOUDSMITH_API_KEY }}
+          command: "push"
+          format: "raw"
+          owner: "fossar"
+          repo: "selfoss-git"
           file: ${{ steps.zipball.outputs.file_name }}
-          api_user: jtojnar
-          repository_user: fossar
-          api_key: ${{ secrets.BINTRAY_API_KEY }}
-          repository: selfoss
-          package: selfoss-git
+          name: selfoss.zip
           version: ${{ steps.zipball.outputs.version }}
-          publish: 1
-          calculate_metadata: false
+          extra: '--tags version:latest'
+
+      - name: Prepare a changelog
+        run: |
+          echo "changelog_text<<CHANGES_EOF" >> $GITHUB_ENV
+          sed '1,/^## /d;/^## /Q' NEWS.md >> $GITHUB_ENV
+          echo "CHANGES_EOF" >> $GITHUB_ENV
 
       - name: Create a release
-        id: create_release
+        uses: softprops/action-gh-release@v0.1.5
         if: github.event_name == 'push' && github.ref == 'refs/heads/master' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.zipball.outputs.version }}
-          release_name: ${{ steps.zipball.outputs.version }}
-
-      - name: Upload zipball to release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.zipball.outputs.file_name }}
-          asset_name: ${{ steps.zipball.outputs.file_name }}
-          asset_content_type: application/zip
+          body: ${{ env.changelog_text }}
+          files: ${{ steps.zipball.outputs.file_name }}

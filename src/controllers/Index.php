@@ -36,7 +36,10 @@ class Index {
     /** @var View view helper */
     private $view;
 
-    public function __construct(Authentication $authentication, \daos\Items $itemsDao, Sources $sourcesController, \daos\Sources $sourcesDao, Tags $tagsController, \daos\Tags $tagsDao, View $view) {
+    /** @var ViewHelper */
+    private $viewHelper;
+
+    public function __construct(Authentication $authentication, \daos\Items $itemsDao, Sources $sourcesController, \daos\Sources $sourcesDao, Tags $tagsController, \daos\Tags $tagsDao, View $view, ViewHelper $viewHelper) {
         $this->authentication = $authentication;
         $this->itemsDao = $itemsDao;
         $this->sourcesController = $sourcesController;
@@ -44,6 +47,7 @@ class Index {
         $this->tagsController = $tagsController;
         $this->tagsDao = $tagsDao;
         $this->view = $view;
+        $this->viewHelper = $viewHelper;
     }
 
     /**
@@ -105,7 +109,7 @@ class Index {
             'all' => $this->view->statsAll,
             'unread' => $this->view->statsUnread,
             'starred' => $this->view->statsStarred,
-            'tags' => $tags
+            'tags' => $tags,
         ];
 
         if (isset($options['sourcesNav']) && $options['sourcesNav'] == 'true') {
@@ -128,12 +132,12 @@ class Index {
     private function loadItems(array $params, array $tags, $search = null) {
         $entries = [];
         foreach ($this->itemsDao->get($params) as $item) {
-            $entries[] = ViewHelper::preprocessEntry($item, $this->tagsController, $tags, $search);
+            $entries[] = $this->viewHelper->preprocessEntry($item, $this->tagsController, $tags, $search);
         }
 
         return [
             'entries' => $entries,
-            'hasMore' => $this->itemsDao->hasMore()
+            'hasMore' => $this->itemsDao->hasMore(),
         ];
     }
 }

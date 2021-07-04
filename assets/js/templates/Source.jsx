@@ -1,9 +1,13 @@
 import React from 'react';
+import PropTypes from 'prop-types';
+import nullable from 'prop-types-nullable';
 import { unescape } from 'html-escaper';
 import classNames from 'classnames';
 import pick from 'lodash.pick';
 import SourceParam from './SourceParam';
 import * as sourceRequests from '../requests/sources';
+import { LoadingState } from '../requests/LoadingState';
+import { LocalizationContext } from '../helpers/i18n';
 
 // cancel source editing
 function handleCancel({ event, source, setSources, setEditedSource }) {
@@ -81,8 +85,10 @@ function handleSave({
                 setEditedSource(null);
 
                 // Update tags and sources for navigation.
-                selfoss.tags.update(response.tags);
-                selfoss.sources.update(response.sources);
+                selfoss.app.setTags(response.tags);
+                selfoss.app.setTagsState(LoadingState.SUCCESS);
+                selfoss.app.setSources(response.sources);
+                selfoss.app.setSourcesState(LoadingState.SUCCESS);
 
                 // Update sources in this page’s model.
                 setSources((sources) =>
@@ -103,8 +109,8 @@ function handleSave({
             }
         })
         .catch((error) => {
-            selfoss.ui.showError(
-                selfoss.ui._('error_edit_source') + ' ' + error.message
+            selfoss.app.showError(
+                selfoss.app._('error_edit_source') + ' ' + error.message
             );
         })
         .finally(() => {
@@ -121,7 +127,7 @@ function handleDelete({
 }) {
     event.preventDefault();
 
-    const answer = confirm(selfoss.ui._('source_warn'));
+    const answer = confirm(selfoss.app._('source_warn'));
     if (answer == false) {
         return;
     }
@@ -146,14 +152,14 @@ function handleDelete({
 
             // Reload tags and remove source from navigation.
             selfoss.reloadTags();
-            selfoss.sources.update(
-                selfoss.sources.sources.filter((source) => source.id !== id)
+            selfoss.app.setSources((sources) =>
+                sources.filter((source) => source.id !== id)
             );
         })
         .catch((error) => {
             setSourceEditDeleteLoading(false);
-            selfoss.ui.showError(
-                selfoss.ui._('error_delete_source') + ' ' + error.message
+            selfoss.app.showError(
+                selfoss.app._('error_delete_source') + ' ' + error.message
             );
         });
 }
@@ -249,23 +255,81 @@ function SourceEditForm({
     setSourceParamsError,
     setJustSavedTimeout,
     sourceErrors,
-    setSourceErrors
+    setSourceErrors,
 }) {
     const sourceId = source.id;
-    const updateEditedSource = (changes) => {
-        if (typeof changes === 'function') {
-            setEditedSource((source) => ({ ...source, ...changes(source) }));
-        } else {
-            setEditedSource((source) => ({ ...source, ...changes }));
-        }
-    };
+    const updateEditedSource = React.useCallback(
+        (changes) => {
+            if (typeof changes === 'function') {
+                setEditedSource((source) => ({ ...source, ...changes(source) }));
+            } else {
+                setEditedSource((source) => ({ ...source, ...changes }));
+            }
+        },
+        [setEditedSource]
+    );
+
+    const titleOnChange = React.useCallback(
+        (event) => updateEditedSource({ title: event.target.value }),
+        [updateEditedSource]
+    );
+
+    const tagsOnChange = React.useCallback(
+        (event) => updateEditedSource({ tags: event.target.value }),
+        [updateEditedSource]
+    );
+
+    const filterOnChange = React.useCallback(
+        (event) => updateEditedSource({ filter: event.target.value }),
+        [updateEditedSource]
+    );
+
+    const spoutOnChange = React.useCallback(
+        (event) =>
+            handleSpoutChange({
+                event,
+                setSpouts,
+                updateEditedSource,
+                setSourceParamsLoading,
+                setSourceParamsError
+            }),
+        [setSpouts, updateEditedSource, setSourceParamsLoading, setSourceParamsError]
+    );
+
+    const saveOnClick = React.useCallback(
+        (event) =>
+            handleSave({
+                event,
+                setSources,
+                source,
+                setEditedSource,
+                setSourceActionLoading,
+                setJustSavedTimeout,
+                setSourceErrors
+            }),
+        [setSources, source, setEditedSource, setSourceActionLoading, setJustSavedTimeout, setSourceErrors]
+    );
+
+    const cancelOnClick = React.useCallback(
+        (event) =>
+            handleCancel({
+                event,
+                source,
+                setSources,
+                setEditedSource
+            })
+        ,
+        [source, setSources, setEditedSource]
+    );
+
+    const _ = React.useContext(LocalizationContext);
 
     return (
         <ul className="source-edit-form">
             {/* title */}
             <li>
                 <label htmlFor={`title-${sourceId}`}>
-                    {selfoss.ui._('source_title')}
+                    {_('source_title')}
                 </label>
                 <input
                     id={`title-${sourceId}`}
@@ -273,10 +337,8 @@ function SourceEditForm({
                     name="title"
                     accessKey="t"
                     value={source.title ?? ''}
-                    placeholder={selfoss.ui._('source_autotitle_hint')}
-                    onChange={(event) =>
-                        updateEditedSource({ title: event.target.value })
-                    }
+                    placeholder={_('source_autotitle_hint')}
+                    onChange={titleOnChange}
                 />
                 {sourceErrors['title'] ? (
                     <span className="error">{sourceErrors['title']}</span>
@@ -286,7 +348,7 @@ function SourceEditForm({
             {/* tags */}
             <li>
                 <label htmlFor={`tags-${sourceId}`}>
-                    {selfoss.ui._('source_tags')}
+                    {_('source_tags')}
                 </label>
                 <input
                     id={`tags-${sourceId}`}
@@ -294,13 +356,11 @@ function SourceEditForm({
                     name="tags"
                     accessKey="g"
                     value={source.tags ?? ''}
-                    onChange={(event) =>
-                        updateEditedSource({ tags: event.target.value })
-                    }
+                    onChange={tagsOnChange}
                 />
                 <span className="source-edit-form-help">
                     {' '}
-                    {selfoss.ui._('source_comma')}
+                    {_('source_comma')}
                 </span>
                 {sourceErrors['tags'] ? (
                     <span className="error">{sourceErrors['tags']}</span>
@@ -310,7 +370,7 @@ function SourceEditForm({
             {/* filter */}
             <li>
                 <label htmlFor={`filter-${sourceId}`}>
-                    {selfoss.ui._('source_filter')}
+                    {_('source_filter')}
                 </label>
                 <input
                     id={`filter-${sourceId}`}
@@ -318,9 +378,7 @@ function SourceEditForm({
                     name="filter"
                     accessKey="f"
                     value={source.filter ?? ''}
-                    onChange={(event) =>
-                        updateEditedSource({ filter: event.target.value })
-                    }
+                    onChange={filterOnChange}
                 />
                 {sourceErrors['filter'] ? (
                     <span className="error">{sourceErrors['filter']}</span>
@@ -330,25 +388,17 @@ function SourceEditForm({
             {/* type */}
             <li>
                 <label htmlFor={`type-${sourceId}`}>
-                    {selfoss.ui._('source_type')}
+                    {_('source_type')}
                 </label>
                 <select
                     id={`type-${sourceId}`}
                     className="source-spout"
                     name="spout"
                     accessKey="y"
-                    onChange={(event) =>
-                        handleSpoutChange({
-                            event,
-                            setSpouts,
-                            updateEditedSource,
-                            setSourceParamsLoading,
-                            setSourceParamsError
-                        })
-                    }
+                    onChange={spoutOnChange}
                     value={source.spout}
                 >
-                    <option value="">{selfoss.ui._('source_select')}</option>
+                    <option value="">{_('source_select')}</option>
                     {Object.entries(spouts).map(([spouttype, spout]) => (
                         <option
                             key={spouttype}
@@ -412,40 +462,41 @@ function SourceEditForm({
                     type="submit"
                     className="source-save"
                     accessKey="s"
-                    onClick={(event) =>
-                        handleSave({
-                            event,
-                            setSources,
-                            source,
-                            setEditedSource,
-                            setSourceActionLoading,
-                            setJustSavedTimeout,
-                            setSourceErrors
-                        })
-                    }
+                    onClick={saveOnClick}
                 >
-                    {selfoss.ui._('source_save')}
+                    {_('source_save')}
                 </button>
                 {' • '}
                 <button
                     type="submit"
                     className="source-cancel"
                     accessKey="c"
-                    onClick={(event) =>
-                        handleCancel({
-                            event,
-                            source,
-                            setSources,
-                            setEditedSource
-                        })
-                    }
+                    onClick={cancelOnClick}
                 >
-                    {selfoss.ui._('source_cancel')}
+                    {_('source_cancel')}
                 </button>
             </li>
         </ul>
     );
 }
+
+SourceEditForm.propTypes = {
+    source: PropTypes.object.isRequired,
+    sourceError: PropTypes.string,
+    setSources: PropTypes.func.isRequired,
+    spouts: PropTypes.object.isRequired,
+    setSpouts: PropTypes.func.isRequired,
+    setEditedSource: PropTypes.func.isRequired,
+    sourceActionLoading: PropTypes.bool.isRequired,
+    setSourceActionLoading: PropTypes.func.isRequired,
+    sourceParamsLoading: PropTypes.bool.isRequired,
+    setSourceParamsLoading: PropTypes.func.isRequired,
+    sourceParamsError: nullable(PropTypes.string).isRequired,
+    setSourceParamsError: PropTypes.func.isRequired,
+    setJustSavedTimeout: PropTypes.func.isRequired,
+    sourceErrors: PropTypes.objectOf(PropTypes.string).isRequired,
+    setSourceErrors: PropTypes.func.isRequired,
+};
 
 export default function Source({ source, setSources, spouts, setSpouts }) {
     const isNew = !source.title;
@@ -478,6 +529,24 @@ export default function Source({ source, setSources, spouts, setSpouts }) {
         };
     }, [justSavedTimeout]);
 
+    const editOnClick = React.useCallback(
+        (event) => handleEdit({ event, source, setEditedSource }),
+        [source]
+    );
+
+    const deleteOnClick = React.useCallback(
+        (event) =>
+            handleDelete({
+                event,
+                source,
+                setSources,
+                setSourceEditDeleteLoading
+            }),
+        [source, setSources]
+    );
+
+    const _ = React.useContext(LocalizationContext);
+
     return (
         <form className={classNames(classes)}>
             <div className="source-icon">
@@ -492,7 +561,7 @@ export default function Source({ source, setSources, spouts, setSpouts }) {
             <div className="source-title">
                 {source.title
                     ? unescape(source.title)
-                    : selfoss.ui._('source_new')}
+                    : _('source_new')}
             </div>{' '}
             <div
                 className={classNames({
@@ -507,11 +576,9 @@ export default function Source({ source, setSources, spouts, setSpouts }) {
                         'source-showparams': true,
                         saved: justSavedTimeout !== null
                     })}
-                    onClick={(event) =>
-                        handleEdit({ event, source, setEditedSource })
-                    }
+                    onClick={editOnClick}
                 >
-                    {selfoss.ui._(
+                    {_(
                         justSavedTimeout !== null ? 'source_saved' : 'source_edit'
                     )}
                 </button>
@@ -520,23 +587,16 @@ export default function Source({ source, setSources, spouts, setSpouts }) {
                     type="button"
                     accessKey="d"
                     className="source-delete"
-                    onClick={(event) =>
-                        handleDelete({
-                            event,
-                            source,
-                            setSources,
-                            setSourceEditDeleteLoading
-                        })
-                    }
+                    onClick={deleteOnClick}
                 >
-                    {selfoss.ui._('source_delete')}
+                    {_('source_delete')}
                 </button>
             </div>
             <div className="source-days">
                 {source.lastentry
-                    ? ` • ${selfoss.ui._(
+                    ? ` • ${_(
                         'source_last_post'
-                    )} ${selfoss.ui._('days', [
+                    )} ${_('days', [
                         daysAgo(new Date(source.lastentry * 1000))
                     ])}`
                     : null}
@@ -566,3 +626,10 @@ export default function Source({ source, setSources, spouts, setSpouts }) {
         </form>
     );
 }
+
+Source.propTypes = {
+    source: PropTypes.object.isRequired,
+    setSources: PropTypes.func.isRequired,
+    spouts: PropTypes.object.isRequired,
+    setSpouts: PropTypes.func.isRequired,
+};

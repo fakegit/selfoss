@@ -1,4 +1,4 @@
-/assets/.cache
+/assets/.parcel-cache
 /data/favicons/*.png
 /data/favicons/*.jpg
 /data/thumbnails/*.png
@@ -10,7 +10,7 @@
 docs/public
 user.css
 user.js
-config.ini
+*.ini
 node_modules
 .env
 vendor/

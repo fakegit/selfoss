@@ -1,4 +1,5 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import { Link, useHistory, useLocation } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import classNames from 'classnames';
@@ -6,9 +7,16 @@ import { createFocusTrap } from 'focus-trap';
 import { nextprev, Direction } from '../shortcuts';
 import { makeEntriesLink } from '../helpers/uri';
 import * as itemsRequests from '../requests/items';
+import * as icons from '../icons';
+import { LocalizationContext } from '../helpers/i18n';
+import { HttpError } from '../errors';
 
 function anonymize(url) {
     return (selfoss.config.anonymizer ?? '') + url;
+}
+
+function stopPropagation(event) {
+    event.stopPropagation();
 }
 
 function lazyLoadImages(content) {
@@ -92,9 +100,9 @@ function handleClick({ event, history, location, target, entry, contentBlock, se
             }
         } else {
             if (selfoss.config.autoCollapse) {
-                selfoss.ui.entryCollapseAll();
+                selfoss.entriesPage.collapseAllEntries();
             }
-            selfoss.ui.entrySelect(entry.id);
+            selfoss.entriesPage.setSelectedEntry(entry.id);
             history.replace(makeEntriesLink(location, { id: entryId }));
 
             if (contentBlock.current.childElementCount === 0) {
@@ -207,16 +215,11 @@ function handleStarredToggle({ event, entry }) {
     const { id } = entry;
     const starr = entry.starred != 1;
 
-    selfoss.ui.entryStar(id, starr);
+    selfoss.entriesPage.starEntry(id, starr);
 
     // update statistics in main menu
     function updateStats(starr) {
-        const starred = selfoss.starredItemsCount.value;
-        if (starr) {
-            selfoss.starredItemsCount.update(starred + 1);
-        } else {
-            selfoss.starredItemsCount.update(starred - 1);
-        }
+        selfoss.app.setStarredItemsCount((starred) => starred + (starr ? 1 : -1));
     }
     updateStats(starr);
 
@@ -230,10 +233,17 @@ function handleStarredToggle({ event, entry }) {
         selfoss.handleAjaxError(error).then(function() {
             selfoss.dbOffline.enqueueStatus(id, 'starred', starr);
         }).catch(function(error) {
+            if (error instanceof HttpError && error.response.status === 403) {
+                selfoss.history.push('/login');
+                // TODO: Use location state once we switch to BrowserRouter
+                selfoss.app.setLoginFormError(selfoss.app._('error_session_expired'));
+                return;
+            }
+
             // rollback ui changes
-            selfoss.ui.entryStar(id, !starr);
+            selfoss.entriesPage.starEntry(id, !starr);
             updateStats(!starr);
-            selfoss.ui.showError(selfoss.ui._('error_star_item') + ' ' + error.message);
+            selfoss.app.showError(selfoss.app._('error_star_item') + ' ' + error.message);
         });
     });
 }
@@ -250,12 +260,12 @@ function handleReadToggle({ event, entry }) {
     const { id } = entry;
     const unread = entry.unread == 1;
 
-    selfoss.ui.entryMark(id, !unread);
+    selfoss.entriesPage.markEntry(id, !unread);
 
     // update statistics in main menue and the currently active tag
     function updateStats(unread) {
         // update all unread counters
-        const unreadstats = selfoss.unreadItemsCount.value;
+        const unreadstats = selfoss.app.state.unreadItemsCount;
         const diff = unread ? -1 : 1;
 
         selfoss.refreshUnread(unreadstats + diff);
@@ -263,7 +273,7 @@ function handleReadToggle({ event, entry }) {
         // update unread on tags and sources
         // Only a single instance of each tag per entry so we can just assign.
         const entryTags = Object.fromEntries(Object.keys(entry.tags).map((tag) => [tag, diff]));
-        selfoss.ui.refreshTagSourceUnread(
+        selfoss.app.refreshTagSourceUnread(
             entryTags,
             {[entry.source]: diff}
         );
@@ -280,16 +290,95 @@ function handleReadToggle({ event, entry }) {
         selfoss.handleAjaxError(error).then(function() {
             selfoss.dbOffline.enqueueStatus(id, 'unread', !unread);
         }).catch(function(error) {
+            if (error instanceof HttpError && error.response.status === 403) {
+                selfoss.history.push('/login');
+                // TODO: Use location state once we switch to BrowserRouter
+                selfoss.app.setLoginFormError(selfoss.app._('error_session_expired'));
+                return;
+            }
+
             // rollback ui changes
-            selfoss.ui.entryMark(id, unread);
+            selfoss.entriesPage.markEntry(id, unread);
             updateStats(!unread);
-            selfoss.ui.showError(selfoss.ui._('error_mark_item') + ' ' + error.message);
+            selfoss.app.showError(selfoss.app._('error_mark_item') + ' ' + error.message);
         });
     });
 }
 
+function ShareButton({ name, label, icon, item, showLabel = true }) {
+    const shareOnClick = React.useCallback(
+        (event) => share({ event, entry: item, name }),
+        [item, name]
+    );
 
-export default function Item({ item, selected, expanded, setNavExpanded }) {
+    return (
+        <button
+            type="button"
+            className={`entry-share entry-share${name}`}
+            title={label}
+            aria-label={label}
+            onClick={shareOnClick}
+        >
+            {icon} {showLabel ? label : null}
+        </button>
+    );
+}
+
+ShareButton.propTypes = {
+    name: PropTypes.string.isRequired,
+    label: PropTypes.string.isRequired,
+    icon: PropTypes.element.isRequired,
+    item: PropTypes.object.isRequired,
+    showLabel: PropTypes.bool,
+};
+
+function ItemTag({tag, color}) {
+    const style = React.useMemo(
+        () => ({ color: color.foreColor, backgroundColor: color.backColor }),
+        [color]
+    );
+    const location = useLocation();
+
+    return (
+        <Link
+            className="entry-tags-tag"
+            style={style}
+            to={makeEntriesLink(location, { category: `tag-${tag}`, id: null })}
+            onClick={preventDefaultOnSmartphone}
+        >
+            {tag}
+        </Link>
+    );
+}
+
+ItemTag.propTypes = {
+    tag: PropTypes.string.isRequired,
+    color: PropTypes.object.isRequired,
+};
+
+/**
+ * Converts Date to a relative string.
+ * When the date is too old, null is returned instead.
+ * @param {Date} currentTime
+ * @param {Date} datetime
+ * @return {?String} relative time reference
+ */
+function datetimeRelative(currentTime, datetime) {
+    const ageInseconds = (currentTime - datetime) / 1000;
+    const ageInMinutes = ageInseconds / 60;
+    const ageInHours = ageInMinutes / 60;
+    const ageInDays = ageInHours / 24;
+
+    if (ageInHours < 1) {
+        return selfoss.app._('minutes', [Math.round(ageInMinutes)]);
+    } else if (ageInDays < 1) {
+        return selfoss.app._('hours', [Math.round(ageInHours)]);
+    } else {
+        return null;
+    }
+}
+
+export default function Item({ currentTime, item, selected, expanded, setNavExpanded }) {
     const { title, author, sourcetitle } = item;
 
     const [fullScreenTrap, setFullScreenTrap] = React.useState(null);
@@ -299,18 +388,57 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
     const location = useLocation();
     const history = useHistory();
 
-    const relDate = selfoss.ui.datetimeRelative(item.datetime);
+    const relDate = React.useMemo(
+        () => datetimeRelative(currentTime, item.datetime),
+        [currentTime, item.datetime]
+    );
     const shares = selfoss.shares.getAll();
+
+    const entryOnClick = React.useCallback(
+        (event) => handleClick({ event, history, location, entry: item, target: '.entry', contentBlock, setFullScreenTrap, setImagesLoaded, setNavExpanded }),
+        [history, location, item, setNavExpanded]
+    );
+
+    const titleOnClick = React.useCallback(
+        (event) => handleClick({ event, history, location, entry: item, target: '.entry-title', contentBlock, setFullScreenTrap, setImagesLoaded }),
+        [history, location, item]
+    );
+
+    const starOnClick = React.useCallback(
+        (event) => handleStarredToggle({ event, entry: item }),
+        [item]
+    );
+
+    const markReadOnClick = React.useCallback(
+        (event) => handleReadToggle({ event, entry: item }),
+        [item]
+    );
+
+    const loadImagesOnClick = React.useCallback(
+        (event) => loadImages({ event, setImagesLoaded, contentBlock }),
+        []
+    );
+
+    const closeOnClick = React.useCallback(
+        (event) => closeFullScreen({ event, history, location, entry: item, setFullScreenTrap }),
+        [history, location, item]
+    );
+
+    const titleHtml = React.useMemo(
+        () => ({ __html: title }),
+        [title]
+    );
+
+    const _ = React.useContext(LocalizationContext);
 
     return (
         <div data-entry-id={item.id}
             data-entry-source={item.source}
-            data-entry-datetime={item.datetime.toISOString()}
             data-entry-url={item.link}
             className={classNames({entry: true, unread: item.unread == 1, expanded, selected})}
             role="article"
             aria-modal={fullScreenTrap !== null}
-            onClick={(event) => handleClick({ event, history, location, entry: item, target: '.entry', contentBlock, setFullScreenTrap, setImagesLoaded, setNavExpanded })}
+            onClick={entryOnClick}
         >
 
             {/* icon */}
@@ -330,7 +458,7 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
             {/* title */}
             <h3
                 className="entry-title"
-                onClick={(event) => handleClick({ event, history, location, entry: item, target: '.entry-title', contentBlock, setFullScreenTrap, setImagesLoaded })}
+                onClick={titleOnClick}
             >
                 <span
                     className="entry-title-link"
@@ -339,21 +467,17 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
                     role="link"
                     tabIndex="0"
                     onKeyUp={handleKeyUp}
-                    dangerouslySetInnerHTML={{__html: title}}
+                    dangerouslySetInnerHTML={titleHtml}
                 />
             </h3>
 
             <span className="entry-tags">
                 {Object.entries(item.tags).map(([tag, color]) =>
-                    <Link
+                    <ItemTag
                         key={tag}
-                        className="entry-tags-tag"
-                        style={{color: color['foreColor'], backgroundColor: color['backColor']}}
-                        to={makeEntriesLink(location, { category: `tag-${tag}`, id: null })}
-                        onClick={preventDefaultOnSmartphone}
-                    >
-                        {tag}
-                    </Link>
+                        tag={tag}
+                        color={color}
+                    />
                 )}
             </span>
 
@@ -391,7 +515,7 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
             {selfoss.config.readingSpeed !== null ?
                 <React.Fragment>
                     <span className="entry-separator">•</span>
-                    <span className="entry-readtime">{selfoss.ui._('article_reading_time', [Math.round(item.wordCount / selfoss.config.readingSpeed)])}</span>
+                    <span className="entry-readtime">{_('article_reading_time', [Math.round(item.wordCount / selfoss.config.readingSpeed)])}</span>
                 </React.Fragment>
                 : null}
 
@@ -409,7 +533,7 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
                 <div ref={contentBlock} />
 
                 <div className="entry-smartphone-share">
-                    <ul aria-label={selfoss.ui._('article_actions')}>
+                    <ul aria-label={_('article_actions')}>
                         <li>
                             <a
                                 href={anonymize(item.link)}
@@ -417,27 +541,24 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 accessKey="o"
-                                onClick={(event) => event.stopPropagation()}
+                                onClick={stopPropagation}
                             >
-                                <FontAwesomeIcon icon={['fas', 'external-link-alt']} /> {selfoss.ui._('open_window')}
+                                <FontAwesomeIcon icon={icons.openWindow} /> {_('open_window')}
                             </a>
                         </li>
                         {shares.map(({ name, label, icon }) => (
                             <li key={name}>
-                                <button
-                                    type="button"
-                                    className={`entry-share entry-share${name}`}
-                                    title={label}
-                                    aria-label={label}
-                                    onClick={(event) => share({ event, entry: item, name })}
-                                >
-                                    {icon} {label}
-                                </button>
+                                <ShareButton
+                                    name={name}
+                                    label={label}
+                                    icon={icon}
+                                    item={item}
+                                />
                             </li>
                         ))}
                         <li>
                             <button type="button" accessKey="n" className="entry-next" onClick={openNext}>
-                                <FontAwesomeIcon icon={['fas', 'arrow-right']} /> {selfoss.ui._('next')}
+                                <FontAwesomeIcon icon={icons.next} /> {_('next')}
                             </button>
                         </li>
                     </ul>
@@ -445,23 +566,23 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
             </div>
 
             {/* toolbar */}
-            <ul aria-label={selfoss.ui._('article_actions')} className="entry-toolbar">
+            <ul aria-label={_('article_actions')} className="entry-toolbar">
                 <li>
                     <button
                         accessKey="a"
                         className={classNames({'entry-starr': true, active: item.starred == 1})}
-                        onClick={(event) => handleStarredToggle({ event, entry: item })}
+                        onClick={starOnClick}
                     >
-                        <FontAwesomeIcon icon={[`fa${item.starred == 1 ? 's' : 'r'}`, 'star']} /> {item.starred == 1 ? selfoss.ui._('unstar') : selfoss.ui._('star')}
+                        <FontAwesomeIcon icon={item.starred == 1 ? icons.unstar : icons.star} /> {item.starred == 1 ? _('unstar') : _('star')}
                     </button>
                 </li>
                 <li>
                     <button
                         accessKey="u"
                         className={classNames({'entry-unread': true, active: item.unread == 1})}
-                        onClick={(event) => handleReadToggle({ event, entry: item })}
+                        onClick={markReadOnClick}
                     >
-                        <FontAwesomeIcon icon={[`fa${item.unread == 1 ? 's' : 'r'}`, 'check-circle']} /> {item.unread == 1 ? selfoss.ui._('mark') : selfoss.ui._('unmark')}
+                        <FontAwesomeIcon icon={item.unread == 1 ? icons.markRead : icons.markUnread} /> {item.unread == 1 ? _('mark') : _('unmark')}
                     </button>
                 </li>
                 <li>
@@ -471,43 +592,49 @@ export default function Item({ item, selected, expanded, setNavExpanded }) {
                         target="_blank"
                         rel="noopener noreferrer"
                         accessKey="o"
-                        onClick={(event) => event.stopPropagation()}
+                        onClick={stopPropagation}
                     >
-                        <FontAwesomeIcon icon={['fas', 'external-link-alt']} /> {selfoss.ui._('open_window')}
+                        <FontAwesomeIcon icon={icons.openWindow} /> {_('open_window')}
                     </a>
                 </li>
                 {!imagesLoaded ?
                     <li>
-                        <button className="entry-loadimages" onClick={(event) => loadImages({ event, setImagesLoaded, contentBlock })}>
-                            <FontAwesomeIcon icon={['fas', 'arrow-alt-circle-down']} /> {selfoss.ui._('load_img')}
+                        <button className="entry-loadimages" onClick={loadImagesOnClick}>
+                            <FontAwesomeIcon icon={icons.loadImages} /> {_('load_img')}
                         </button>
                     </li>
                     : null
                 }
                 <li>
                     <button type="button" accessKey="n" className="entry-next" onClick={openNext}>
-                        <FontAwesomeIcon icon={['fas', 'arrow-right']} /> {selfoss.ui._('next')}
+                        <FontAwesomeIcon icon={icons.next} /> {_('next')}
                     </button>
                 </li>
                 {shares.map(({ name, label, icon }) => (
                     <li key={name}>
-                        <button
-                            type="button"
-                            className={`entry-share entry-share${name}`}
-                            title={label}
-                            aria-label={label}
-                            onClick={(event) => share({ event, entry: item, name })}
-                        >
-                            {icon}
-                        </button>
+                        <ShareButton
+                            name={name}
+                            label={label}
+                            icon={icon}
+                            item={item}
+                            showLabel={false}
+                        />
                     </li>
                 ))}
                 <li>
-                    <button accessKey="c" className="entry-close" onClick={(event) => closeFullScreen({ event, history, location, entry: item, setFullScreenTrap })}>
-                        <FontAwesomeIcon icon={['far', 'times-circle']} /> {selfoss.ui._('close_entry')}
+                    <button accessKey="c" className="entry-close" onClick={closeOnClick}>
+                        <FontAwesomeIcon icon={icons.close} /> {_('close_entry')}
                     </button>
                 </li>
             </ul>
         </div>
     );
 }
+
+Item.propTypes = {
+    currentTime: PropTypes.instanceOf(Date).isRequired,
+    item: PropTypes.object.isRequired,
+    selected: PropTypes.bool.isRequired,
+    expanded: PropTypes.bool.isRequired,
+    setNavExpanded: PropTypes.func.isRequired,
+};

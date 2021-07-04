@@ -1,7 +1,7 @@
 {
   "dependencies": {
     "@fancyapps/fancybox": "^3.1.20",
-    "@fortawesome/fontawesome-svg-core": "^1.2.30",
+    "@fortawesome/fontawesome-svg-core": "^1.2.35",
     "@fortawesome/free-brands-svg-icons": "^5.14.0",
     "@fortawesome/free-regular-svg-icons": "^5.14.0",
     "@fortawesome/free-solid-svg-icons": "^5.14.0",
@@ -11,37 +11,43 @@
     "classnames": "^2.2.6",
     "clipboard-polyfill": "^3.0.0",
     "core-js": "^3.2.1",
-    "dexie": "^2.0.1",
+    "dexie": "^3.0.0",
     "focus-trap": "^6.2.0",
     "form-urlencoded": "^6.0.0",
     "html-escaper": "^3.0.0",
     "jquery": "^3.5.1",
     "lodash.pick": "^4.4.0",
+    "prop-types": "^15.7.2",
+    "prop-types-nullable": "^1.0.1",
     "ramda": "^0.27.1",
     "react": "^17.0.1",
     "react-dom": "^17.0.1",
     "react-router-dom": "^5.2.0",
     "reset-css": "^5.0.1",
+    "rooks": "^5.0.2",
     "spectrum-colorpicker": "^1.8.1",
     "tinykeys": "^1.1.1",
-    "unreset-css": "^1.0.1"
+    "unreset-css": "^1.0.1",
+    "use-state-with-deps": "^1.1.1"
   },
   "devDependencies": {
     "@babel/core": "^7.12.10",
     "@babel/eslint-parser": "^7.12.1",
     "@babel/preset-react": "^7.10.4",
     "@babel/types": "^7.9.6",
-    "autoprefixer": "^9.8.6",
+    "@parcel/packager-raw-url": "2.0.0-beta.3.1",
+    "@parcel/transformer-sass": "2.0.0-beta.3.1",
+    "@parcel/transformer-webmanifest": "2.0.0-beta.3.1",
     "eslint": "^7.17.0",
     "eslint-plugin-react": "^7.20.6",
     "eslint-plugin-react-hooks": "^4.2.0",
-    "parcel-bundler": "^1.12.3",
-    "parcel-plugin-sw-cache": "^0.3.1",
+    "eslint-plugin-react-perf": "^3.3.0",
+    "parcel": "2.0.0-beta.3.1",
+    "parcel-config-precache-manifest": "^0.0.4",
     "prettier": "^2.0.0",
-    "sass": "^1.26.11",
     "stylelint": "^13.6.1",
     "stylelint-config-prettier": "^8.0.2",
-    "stylelint-config-standard": "^21.0.0",
+    "stylelint-config-standard": "^22.0.0",
     "stylelint-prettier": "^1.1.1"
   },
   "scripts": {
@@ -49,23 +55,9 @@
     "fix:styles": "npm run lint:styles -- --fix",
     "fix:js": "npm run lint:js -- --fix",
     "lint": "npm run lint:js && npm run lint:styles",
-    "lint:js": "eslint --ext .jsx,.js js/",
+    "lint:js": "eslint --ext .jsx,.js .",
     "lint:styles": "stylelint styles/*.scss",
-    "dev": "parcel watch index.html opml.html hashpassword.html -d ../public/ --public-url ./",
-    "build": "parcel build index.html opml.html hashpassword.html -d ../public/ --public-url ./"
-  },
-  "cache": {
-    "strategy": "inject",
-    "inDev": true,
-    "swSrc": "./js/selfoss-sw-offline.js",
-    "globPatterns": [
-      "**/*.{js,css,jpg,png,gif,svg,eot,ttf,woff,woff2}"
-    ],
-    "templatedURLs": {
-      "./": [
-        "index.html"
-      ]
-    },
-    "swDest": "selfoss-sw-offline.js"
+    "dev": "parcel watch index.html opml.html hashpassword.html --dist-dir ../public/ --public-url ./ --no-hmr",
+    "build": "parcel build index.html opml.html hashpassword.html --dist-dir ../public/ --public-url ./"
   }
 }

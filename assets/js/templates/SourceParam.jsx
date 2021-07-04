@@ -1,4 +1,6 @@
 import React from 'react';
+import PropTypes from 'prop-types';
+import { LocalizationContext } from '../helpers/i18n';
 
 export default function SourceParam({
     spoutParamName,
@@ -8,19 +10,36 @@ export default function SourceParam({
     sourceId,
     setEditedSource
 }) {
-    const updateSourceParam = (event) => {
-        setEditedSource(({ params, ...restSource }) => ({
-            ...restSource,
-            params: {
-                ...params,
-                [spoutParamName]: event.target.value
-            }
-        }));
-    };
+    const updateSourceParam = React.useCallback(
+        (event) => {
+            setEditedSource(({ params, ...restSource }) => ({
+                ...restSource,
+                params: {
+                    ...params,
+                    [spoutParamName]: event.target.value
+                }
+            }));
+        },
+        [setEditedSource, spoutParamName]
+    );
+
+    const updateSourceParamBool = React.useCallback(
+        (event) =>
+            updateSourceParam({
+                target: {
+                    value: event.target.checked
+                        ? '1'
+                        : undefined
+                }
+            }),
+        [updateSourceParam]
+    );
 
     let value =
         spoutParamName in params ? params[spoutParamName] : spoutParam.default;
     let control = null;
+
+    const _ = React.useContext(LocalizationContext);
 
     if (['text', 'checkbox', 'url'].includes(spoutParam.type)) {
         let checked = undefined;
@@ -42,14 +61,7 @@ export default function SourceParam({
                 onChange={
                     spoutParam.type !== 'checkbox'
                         ? updateSourceParam
-                        : (event) =>
-                            updateSourceParam({
-                                target: {
-                                    value: event.target.checked
-                                        ? '1'
-                                        : undefined
-                                }
-                            })
+                        : updateSourceParamBool
                 }
             />
         );
@@ -59,7 +71,7 @@ export default function SourceParam({
                 id={`${spoutParamName}-${sourceId}`}
                 type={spoutParam.type}
                 name={spoutParamName}
-                placeholder={selfoss.ui._('source_pwd_placeholder')}
+                placeholder={_('source_pwd_placeholder')}
                 onChange={updateSourceParam}
             />
         );
@@ -97,3 +109,12 @@ export default function SourceParam({
         </li>
     );
 }
+
+SourceParam.propTypes = {
+    spoutParamName: PropTypes.string.isRequired,
+    spoutParam: PropTypes.object.isRequired,
+    params: PropTypes.object.isRequired,
+    sourceErrors: PropTypes.objectOf(PropTypes.string).isRequired,
+    sourceId: PropTypes.number.isRequired,
+    setEditedSource: PropTypes.func.isRequired,
+};

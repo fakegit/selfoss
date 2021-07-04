@@ -1,8 +1,11 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import { useLocation, useHistory } from 'react-router-dom';
 import classNames from 'classnames';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { makeEntriesLink } from '../helpers/uri';
+import * as icons from '../icons';
+import { LocalizationContext } from '../helpers/i18n';
 
 // search button shows search input or executes search
 function handleSubmit({ active, setActive, searchField, searchText, history, location, setNavExpanded }) {
@@ -45,11 +48,8 @@ function handleRemove({ setActive, searchField, history, location }) {
     history.push(makeEntriesLink(location, { search: '', id: null }));
 }
 
-export default function NavSearch({ setNavExpanded }) {
+export default function NavSearch({ setNavExpanded, offlineState }) {
     const [active, setActive] = React.useState(false);
-    const [offlineState, setOfflineState] = React.useState(
-        selfoss.offlineState.value
-    );
 
     const searchField = React.useRef(null);
     const searchButton = React.useRef(null);
@@ -67,23 +67,32 @@ export default function NavSearch({ setNavExpanded }) {
         setSearchText(oldTerm);
     }, [oldTerm]);
 
-    React.useEffect(() => {
-        const offlineStateListener = (event) => {
-            setOfflineState(event.value);
-        };
+    const termOnKeyUp = React.useCallback(
+        (event) =>
+            handleFieldKeyUp({
+                event,
+                searchButton,
+                searchRemoveButton
+            }),
+        []
+    );
 
-        // It might happen that value changes between creating the component and setting up the event handlers.
-        offlineStateListener({ value: selfoss.offlineState.value });
+    const termOnChange = React.useCallback(
+        (event) => setSearchText(event.target.value),
+        []
+    );
 
-        selfoss.offlineState.addEventListener('change', offlineStateListener);
+    const removeOnClick = React.useCallback(
+        () => handleRemove({ setActive, searchField, history, location }),
+        [history, location]
+    );
 
-        return () => {
-            selfoss.offlineState.removeEventListener(
-                'change',
-                offlineStateListener
-            );
-        };
-    }, []);
+    const searchOnClick = React.useCallback(
+        () => handleSubmit({ active, setActive, searchField, searchText, history, location, setNavExpanded }),
+        [active, searchText, history, location, setNavExpanded]
+    );
+
+    const _ = React.useContext(LocalizationContext);
 
     return (
         <div
@@ -96,47 +105,45 @@ export default function NavSearch({ setNavExpanded }) {
             role="search"
         >
             <input
-                aria-label={selfoss.ui._('search_label')}
+                aria-label={_('search_label')}
                 type="search"
                 id="search-term"
                 accessKey="s"
                 ref={searchField}
                 value={searchText}
-                onKeyUp={(event) =>
-                    handleFieldKeyUp({
-                        event,
-                        searchButton,
-                        searchRemoveButton
-                    })
-                }
-                onChange={(event) => setSearchText(event.target.value)}
+                onKeyUp={termOnKeyUp}
+                onChange={termOnChange}
             />
             <button
                 id="search-remove"
-                title={selfoss.ui._('searchremove')}
+                title={_('searchremove')}
                 accessKey="h"
-                aria-label={selfoss.ui._('searchremove')}
-                onClick={() => handleRemove({ setActive, searchField, history, location })}
+                aria-label={_('searchremove')}
+                onClick={removeOnClick}
                 ref={searchRemoveButton}
             >
-                <FontAwesomeIcon icon={['fas', 'times']} />
+                <FontAwesomeIcon icon={icons.remove} />
             </button>
             <button
                 id="search-button"
-                title={selfoss.ui._('searchbutton')}
-                aria-label={selfoss.ui._('searchbutton')}
+                title={_('searchbutton')}
+                aria-label={_('searchbutton')}
                 accessKey="e"
-                onClick={() =>
-                    handleSubmit({ active, setActive, searchField, searchText, history, location, setNavExpanded })
+                onClick={searchOnClick
                 }
                 ref={searchButton}
             >
-                <FontAwesomeIcon icon={['fas', 'search']} />{' '}
+                <FontAwesomeIcon icon={icons.search} />{' '}
                 <span className="search-button-label">
-                    {selfoss.ui._('searchbutton')}
+                    {_('searchbutton')}
                 </span>
             </button>
             <hr />
         </div>
     );
 }
+
+NavSearch.propTypes = {
+    setNavExpanded: PropTypes.func.isRequired,
+    offlineState: PropTypes.bool.isRequired,
+};

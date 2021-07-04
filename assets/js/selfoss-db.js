@@ -35,7 +35,7 @@ selfoss.db = {
             selfoss.db.online = true;
             selfoss.db.sync();
             selfoss.reloadTags();
-            selfoss.ui.setOnline();
+            selfoss.app.setOfflineState(false);
         }
     },
 
@@ -49,7 +49,7 @@ selfoss.db = {
         if (selfoss.db.storage && !selfoss.db.broken) {
             selfoss.dbOnline._syncDone(false);
             selfoss.db.online = false;
-            selfoss.ui.setOffline();
+            selfoss.app.setOfflineState(true);
 
             return Promise.resolve();
         } else {
@@ -73,12 +73,12 @@ selfoss.db = {
 
 
     isValidTag: function(name) {
-        return selfoss.tags.tags.find((tag) => tag.tag === name) !== undefined;
+        return selfoss.app.state.tags.length === 0 || selfoss.app.state.tags.find((tag) => tag.tag === name) !== undefined;
     },
 
 
     isValidSource: function(id) {
-        return selfoss.sources.sources.find((source) => source.id === id) !== undefined;
+        return selfoss.app.state.sources.length === 0 || selfoss.app.state.sources.find((source) => source.id === id) !== undefined;
     },
 
 

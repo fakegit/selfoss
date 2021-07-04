@@ -7,7 +7,7 @@ For more information visit our [web site](https://selfoss.aditu.de).
 ## Download
 
 * [Stable releases](https://github.com/fossar/selfoss/releases) – if you just want to use selfoss.
-* [Development builds](https://bintray.com/fossar/selfoss/selfoss-git) ([latest](https://bintray.com/fossar/selfoss/selfoss-git/_latestVersion#files)) – if you want to try unreleased features or bug fixes, or help testing them.
+* [Development builds](https://cloudsmith.io/~fossar/repos/selfoss-git/packages/) ([latest](https://cloudsmith.io/~fossar/repos/selfoss-git/packages/?q=version%3Alatest)) – if you want to try unreleased features or bug fixes, or help testing them. Hosted by [Cloudsmith](https://cloudsmith.com)
 * [Git-tracked source code](https://github.com/fossar/selfoss) – if you want to join selfoss development. Some [assembly](#development) required.
 
 
@@ -26,10 +26,11 @@ For further questions or on any problem use our support forum: https://selfoss.a
 
 ## Configuration
 
-1. Copy `defaults.ini` to `config.ini`.
+No configuration is needed to use selfoss but you can customize the settings as follows:
+
+1. Rename `config-example.ini` to `config.ini`.
 2. Edit `config.ini` and delete any lines you do not wish to override.
-3. Do not delete the `[globals]` line.
-4. See <https://selfoss.aditu.de/> for examples.
+3. See <https://selfoss.aditu.de/> for examples.
 
 
 ## Update
@@ -101,3 +102,5 @@ Special thanks to the great programmers of these libraries used by selfoss:
 * [FullTextRSS filters](http://help.fivefilters.org/customer/portal/articles/223153-site-patterns)
 
 Icon made by http://blackbooze.com/
+
+Package repository hosting is graciously provided by [Cloudsmith](https://cloudsmith.com). Cloudsmith is the only fully hosted, cloud-native, universal package management solution, that enables your organization to create, store and share packages in any format, to any place, with total confidence.

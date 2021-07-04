@@ -3,7 +3,11 @@
     "extends": [
         "eslint:recommended",
         "plugin:react/recommended",
-        "plugin:react-hooks/recommended"
+        "plugin:react-hooks/recommended",
+        "plugin:react-perf/recommended"
+    ],
+    "plugins": [
+        "react-perf"
     ],
     "parser": "@babel/eslint-parser",
     "parserOptions": {
@@ -16,7 +20,7 @@
         "block-spacing": "error",
         "brace-style": "error",
         "camelcase": "error",
-        "comma-dangle": "error",
+        "comma-dangle": ["error", "only-multiline"],
         "comma-spacing": "error",
         "comma-style": "error",
         "curly": "error",
@@ -34,14 +38,16 @@
         "object-curly-newline": ["error", {"multiline": true, "consistent": true}],
         "one-var-declaration-per-line": "error",
         "quotes": ["error", "single", {"avoidEscape": true}],
+        "react-hooks/exhaustive-deps": ["warn", {
+          "additionalHooks": "(useStateWithDeps)"
+        }],
         "semi": "error",
         "semi-spacing": "error",
         "space-before-blocks": "error",
         "space-before-function-paren": ["error", "never"],
         "space-in-parens": "error",
         "space-infix-ops": "error",
-        "unicode-bom": "error",
-        "react/prop-types": [1]
+        "unicode-bom": "error"
     },
     "env": {
         "browser": true,

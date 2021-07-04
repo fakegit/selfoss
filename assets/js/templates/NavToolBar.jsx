@@ -1,6 +1,9 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import { useHistory } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import * as icons from '../icons';
+import { LocalizationContext } from '../helpers/i18n';
 
 function handleReloadAll({ setReloading, setNavExpanded }) {
     setReloading(true);
@@ -42,51 +45,77 @@ export default function NavToolBar({ setNavExpanded }) {
 
     const history = useHistory();
 
+    const refreshOnClick = React.useCallback(
+        () => handleReloadAll({ setReloading, setNavExpanded }),
+        [setNavExpanded]
+    );
+
+    const settingsOnClick = React.useCallback(
+        () => handleSettings({ history, setNavExpanded }),
+        [history, setNavExpanded]
+    );
+
+    const logoutOnClick = React.useCallback(
+        () => handleLogOut({ setNavExpanded }),
+        [setNavExpanded]
+    );
+
+    const loginOnClick = React.useCallback(
+        () => handleLogIn({ history }),
+        [history]
+    );
+
+    const _ = React.useContext(LocalizationContext);
+
     return (
         <div className="nav-toolbar">
             <button
                 id="nav-refresh"
-                title={selfoss.ui._('refreshbutton')}
-                aria-label={selfoss.ui._('refreshbutton')}
+                title={_('refreshbutton')}
+                aria-label={_('refreshbutton')}
                 accessKey="r"
-                onClick={() => handleReloadAll({ setReloading, setNavExpanded })}
+                onClick={refreshOnClick}
             >
                 <FontAwesomeIcon
-                    icon={['fas', 'sync-alt']}
+                    icon={icons.reload}
                     fixedWidth
                     spin={reloading}
                 />
             </button>
             <button
                 id="nav-settings"
-                title={selfoss.ui._('settingsbutton')}
-                aria-label={selfoss.ui._('settingsbutton')}
+                title={_('settingsbutton')}
+                aria-label={_('settingsbutton')}
                 accessKey="t"
-                onClick={() => handleSettings({ history, setNavExpanded })}
+                onClick={settingsOnClick}
             >
                 <FontAwesomeIcon
-                    icon={['fas', 'cloud-upload-alt']}
+                    icon={icons.settings}
                     fixedWidth
                 />
             </button>
             <button
                 id="nav-logout"
-                title={selfoss.ui._('logoutbutton')}
-                aria-label={selfoss.ui._('logoutbutton')}
+                title={_('logoutbutton')}
+                aria-label={_('logoutbutton')}
                 accessKey="l"
-                onClick={() => handleLogOut({ setNavExpanded })}
+                onClick={logoutOnClick}
             >
-                <FontAwesomeIcon icon={['fas', 'sign-out-alt']} fixedWidth />
+                <FontAwesomeIcon icon={icons.signOut} fixedWidth />
             </button>
             <button
                 id="nav-login"
-                title={selfoss.ui._('loginbutton')}
-                aria-label={selfoss.ui._('loginbutton')}
+                title={_('loginbutton')}
+                aria-label={_('loginbutton')}
                 accessKey="l"
-                onClick={() => handleLogIn({ history })}
+                onClick={loginOnClick}
             >
-                <FontAwesomeIcon icon={['fas', 'key']} fixedWidth />
+                <FontAwesomeIcon icon={icons.logIn} fixedWidth />
             </button>
         </div>
     );
 }
+
+NavToolBar.propTypes = {
+    setNavExpanded: PropTypes.func.isRequired,
+};

@@ -1,7 +1,9 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import classNames from 'classnames';
 import { SpinnerBig } from './Spinner';
 import { useHistory } from 'react-router-dom';
+import { LocalizationContext } from '../helpers/i18n';
 
 function handleLogIn({
     event,
@@ -29,13 +31,44 @@ export default function LoginForm({
     error,
     setError,
     offlineEnabled,
-    setOfflineEnabled
+    setOfflineEnabled,
 }) {
     const [username, setUsername] = React.useState('');
     const [password, setPassword] = React.useState('');
     const [loading, setLoading] = React.useState(false);
 
     const history = useHistory();
+
+    const formOnSubmit = React.useCallback(
+        (event) =>
+            handleLogIn({
+                event,
+                history,
+                setLoading,
+                setError,
+                username,
+                password,
+                offlineEnabled
+            }),
+        [history, setError, username, password, offlineEnabled]
+    );
+
+    const usernameOnChange = React.useCallback(
+        (event) => setUsername(event.target.value),
+        []
+    );
+
+    const passwordOnChange = React.useCallback(
+        (event) => setPassword(event.target.value),
+        []
+    );
+
+    const offlineOnChange = React.useCallback(
+        (event) => setOfflineEnabled(event.target.checked),
+        [setOfflineEnabled]
+    );
+
+    const _ = React.useContext(LocalizationContext);
 
     return (
         <React.Fragment>
@@ -44,17 +77,7 @@ export default function LoginForm({
                 action=""
                 className={classNames({ loading: loading })}
                 method="post"
-                onSubmit={(event) =>
-                    handleLogIn({
-                        event,
-                        history,
-                        setLoading,
-                        setError,
-                        username,
-                        password,
-                        offlineEnabled
-                    })
-                }
+                onSubmit={formOnSubmit}
             >
                 <ul id="login">
                     <li>
@@ -62,7 +85,7 @@ export default function LoginForm({
                     </li>
                     <li>
                         <label htmlFor="username">
-                            {selfoss.ui._('login_username')}
+                            {_('login_username')}
                         </label>{' '}
                         <input
                             type="text"
@@ -70,16 +93,15 @@ export default function LoginForm({
                             id="username"
                             accessKey="u"
                             autoComplete="username"
-                            onChange={(event) =>
-                                setUsername(event.target.value)
-                            }
+                            onChange={usernameOnChange}
                             value={username}
+                            autoFocus
                             required
                         />
                     </li>
                     <li>
                         <label htmlFor="password">
-                            {selfoss.ui._('login_password')}
+                            {_('login_password')}
                         </label>{' '}
                         <input
                             type="password"
@@ -87,15 +109,13 @@ export default function LoginForm({
                             id="password"
                             accessKey="p"
                             autoComplete="current-password"
-                            onChange={(event) =>
-                                setPassword(event.target.value)
-                            }
+                            onChange={passwordOnChange}
                             value={password}
                         />
                     </li>
                     <li>
                         <label htmlFor="enableoffline">
-                            {selfoss.ui._('login_offline')}
+                            {_('login_offline')}
                         </label>{' '}
                         <label>
                             <input
@@ -103,13 +123,11 @@ export default function LoginForm({
                                 name="enableoffline"
                                 id="enableoffline"
                                 accessKey="o"
-                                onChange={(event) =>
-                                    setOfflineEnabled(event.target.checked)
-                                }
+                                onChange={offlineOnChange}
                                 checked={offlineEnabled}
                             />{' '}
                             <span className="badge-experimental">
-                                {selfoss.ui._('experimental')}
+                                {_('experimental')}
                             </span>
                         </label>
                     </li>
@@ -121,7 +139,7 @@ export default function LoginForm({
                         <input
                             type="submit"
                             accessKey="l"
-                            value={selfoss.ui._('login')}
+                            value={_('login')}
                         />
                     </li>
                 </ul>
@@ -129,3 +147,10 @@ export default function LoginForm({
         </React.Fragment>
     );
 }
+
+LoginForm.propTypes = {
+    error: PropTypes.string.isRequired,
+    setError: PropTypes.func.isRequired,
+    offlineEnabled: PropTypes.bool.isRequired,
+    setOfflineEnabled: PropTypes.func.isRequired,
+};

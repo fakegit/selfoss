@@ -1,20 +1,18 @@
 @import '@fancyapps/fancybox/dist/jquery.fancybox.css';
 @import 'spectrum-colorpicker/spectrum.css';
-@import 'reset-css/sass/reset';
+@import 'reset-css/sass/_reset.scss';
 
 /* base */
 
-html {
+html,
+body {
     height: 100%;
-    overflow-x: hidden;
 }
 
 body {
     font: lighter 18px/27px 'Open Sans', Arial, sans-serif;
     color: black;
     background: url(../images/bg.gif) repeat;
-    height: 100%;
-    position: relative;
 }
 
 select,
@@ -489,7 +487,7 @@ span.offline-count.diff {
     padding: 0 1em;
     overflow-wrap: break-word;
 
-    @import 'unreset-css/unreset';
+    @import 'unreset-css/_unreset.scss';
 }
 
 .entry-content a {

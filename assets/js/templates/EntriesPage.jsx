@@ -1,5 +1,8 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 import { useRouteMatch, useLocation } from 'react-router-dom';
+import { useStateWithDeps } from 'use-state-with-deps';
+import nullable from 'prop-types-nullable';
 import Item from './Item';
 import { FilterType } from '../Filter';
 import * as itemsRequests from '../requests/items';
@@ -7,8 +10,14 @@ import * as sourceRequests from '../requests/sources';
 import { LoadingState } from '../requests/LoadingState';
 import { Spinner, SpinnerBig } from './Spinner';
 import classNames from 'classnames';
+import { LocalizationContext } from '../helpers/i18n';
+import { HttpError } from '../errors';
 
-function reloadList({ fetchParams, append = false, waitForSync = true, entryId = null, setLoadingState = selfoss.entriesPage.setLoadingState.bind(selfoss.entriesPage) }) {
+function reloadList({ fetchParams, abortController, append = false, waitForSync = true, entryId = null, setLoadingState }) {
+    if (abortController.signal.aborted) {
+        return Promise.resolve();
+    }
+
     if (entryId && fetchParams.fromId === undefined) {
         fetchParams = {
             ...fetchParams,
@@ -23,16 +32,20 @@ function reloadList({ fetchParams, append = false, waitForSync = true, entryId =
     setLoadingState(LoadingState.LOADING);
 
     var reload = () => {
-        let reloader = selfoss.dbOffline.reloadList;
+        if (abortController.signal.aborted) {
+            return Promise.resolve();
+        }
+
+        let reloader = selfoss.dbOffline.getEntries;
 
         // tag, source and search filtering not supported offline (yet?)
         if (fetchParams.tag || fetchParams.source || fetchParams.search) {
-            reloader = selfoss.dbOnline.reloadList;
+            reloader = selfoss.dbOnline.getEntries;
         }
 
         var forceLoadOnline = selfoss.dbOffline.olderEntriesOnline || selfoss.dbOffline.shouldLoadEntriesOnline;
         if (!selfoss.db.enableOffline.value || (selfoss.db.online && forceLoadOnline)) {
-            reloader = selfoss.dbOnline.reloadList;
+            reloader = selfoss.dbOnline.getEntries;
         }
 
         // Clean state when not just adding items.
@@ -44,7 +57,11 @@ function reloadList({ fetchParams, append = false, waitForSync = true, entryId =
         }
 
         setLoadingState(LoadingState.LOADING);
-        reloader(fetchParams).then(({ entries, hasMore }) => {
+        return reloader(fetchParams, abortController).then(({ entries, hasMore }) => {
+            if (abortController.signal.aborted) {
+                return;
+            }
+
             setLoadingState(LoadingState.SUCCESS);
             selfoss.entriesPage.setHasMore(hasMore);
 
@@ -63,7 +80,7 @@ function reloadList({ fetchParams, append = false, waitForSync = true, entryId =
                         return;
                     }
 
-                    selfoss.ui.entryActivate(entryId);
+                    selfoss.entriesPage.activateEntry(entryId);
                     // ensure scrolling to requested entry even if scrolling to article
                     // header is disabled
                     if (!selfoss.config.scrollToArticleHeader) {
@@ -78,121 +95,126 @@ function reloadList({ fetchParams, append = false, waitForSync = true, entryId =
             }
 
         }).catch((error) => {
+            if (abortController.signal.aborted) {
+                return;
+            }
+
+            if (error instanceof HttpError && error.response.status === 403) {
+                selfoss.history.push('/login');
+                // TODO: Use location state once we switch to BrowserRouter
+                selfoss.app.setLoginFormError(selfoss.app._('error_session_expired'));
+                return;
+            }
+
             setLoadingState(LoadingState.FAILURE);
-            selfoss.ui.showError(selfoss.ui._('error_loading') + ' ' + error.message);
+            selfoss.app.showError(selfoss.app._('error_loading') + ' ' + error.message);
         });
     };
 
     if (waitForSync && selfoss.dbOnline.syncing.promise) {
         selfoss.db.userWaiting = true;
-        selfoss.dbOnline.syncing.promise.finally(reload);
+        return selfoss.dbOnline.syncing.promise.finally(reload);
     } else {
-        reload();
+        return reload();
     }
 }
 
 // updates a source
-function handleRefreshSource({ event, fetchParams, setLoadingState, setNavExpanded }) {
+function handleRefreshSource({ event, source, setLoadingState, setNavExpanded, reload }) {
     event.preventDefault();
 
     // show loading
     setLoadingState(LoadingState.LOADING);
 
-    sourceRequests.refreshSingle(fetchParams.source).then(() => {
+    return sourceRequests.refreshSingle(source).then(() => {
         // hide nav on smartphone
         setNavExpanded(false);
 
         // Fetch the new items and reload the list.
         // Will also clear the loading status.
-        reloadList({ fetchParams });
+        reload();
     }).catch((error) => {
-        alert(selfoss.ui._('error_refreshing_source') + ' ' + error.message);
+        alert(selfoss.app._('error_refreshing_source') + ' ' + error.message);
     });
 }
 
-function loadMore({ event, fetchParams, entries, setMoreLoadingState }) {
-    event.preventDefault();
-    const lastEntry = entries[entries.length - 1];
-
-    fetchParams = {
-        ...fetchParams,
-        // Calculate offset.
-        fromDatetime: lastEntry ? lastEntry.datetime : undefined,
-        fromId: lastEntry ? lastEntry.id : undefined
-    };
-
-    reloadList({
-        fetchParams,
-        append: true,
-        setLoadingState: setMoreLoadingState
-    });
-}
-
-export function EntriesPage({ entries, hasMore, loadingState, setLoadingState, selectedEntry, expandedEntries, setNavExpanded, shouldUpdateItems, setShouldUpdateItems }) {
+export function EntriesPage({ entries, hasMore, loadingState, setLoadingState, selectedEntry, expandedEntries, setNavExpanded, navSourcesExpanded, reload }) {
     const allowedToUpdate = !selfoss.config.authEnabled || selfoss.config.allowPublicUpdate || selfoss.loggedin.value;
 
     const location = useLocation();
-    const queryString = new URLSearchParams(location.search);
+    const searchText = React.useMemo(() => {
+        const queryString = new URLSearchParams(location.search);
 
-    const [navSourcesExpanded, setNavSourcesExpanded] = React.useState(selfoss.navSourcesExpanded.value);
+        return queryString.get('search') ?? '';
+    }, [location.search]);
 
     const { params } = useRouteMatch();
     const currentTag = params.category?.startsWith('tag-') ? params.category.replace(/^tag-/, '') : null;
     const currentSource = params.category?.startsWith('source-') ? parseInt(params.category.replace(/^source-/, ''), 10) : null;
 
-    // Object with parameters for GET /items and similar API calls
-    // based on the current location.
-    const fetchParams = {
-        type: params.filter,
-        tag: currentTag,
-        source: currentSource,
-        extraIds: [],
-        sourcesNav: navSourcesExpanded,
-        search: queryString.get('search') ?? ''
-    };
+    // The offsets for pagination.
+    // Clear them when URL changes, except for when only id changes since that happens when reading.
+    const [fromDatetime, setFromDatetime] = useStateWithDeps(
+        undefined,
+        [params.filter, currentTag, currentSource, searchText]
+    );
+    const [fromId, setFromId] = useStateWithDeps(
+        undefined,
+        [params.filter, currentTag, currentSource, searchText]
+    );
+
+    // Cache the item id from initial URL so that we can fetch it
+    // but do not re-fetch when the id in the URI changes later
+    // since that happens when reading.
+    const initialItemId = React.useMemo(() => {
+        return params.id;
+    }, [params.filter, currentTag, currentSource, searchText]);
+    // Same for the state of navigation being expanded.
+    // It is only passed to the API request as a part of optimization scheme
+    // so there is no need for it to trigger refresh of the entries.
+    const initialNavSourcesExpanded = React.useMemo(() => {
+        return navSourcesExpanded;
+    }, [params.filter, currentTag, currentSource, searchText]);
 
     const [moreLoadingState, setMoreLoadingState] = React.useState(LoadingState.INITIAL);
 
-    // Schedule fetching data and reloading the list when one of the critical parameters changes.
-    // We ignore the change when only id changes since that happens when reading.
-    React.useEffect(() => {
-        setShouldUpdateItems(true);
-    }, [fetchParams.type, fetchParams.tag, fetchParams.source, fetchParams.search]);
-
     // Perform the scheduled reload.
     React.useEffect(() => {
-        if (!shouldUpdateItems) {
-            return;
-        }
+        const append = fromId !== undefined || fromDatetime !== undefined;
+        const abortController = new AbortController();
 
         reloadList({
-            fetchParams,
+            // Object with parameters for GET /items and similar API calls
+            // based on the current location.
+            fetchParams: {
+                type: params.filter,
+                tag: currentTag,
+                source: currentSource,
+                extraIds: [],
+                sourcesNav: initialNavSourcesExpanded,
+                search: searchText,
+                fromDatetime,
+                fromId,
+            },
+            abortController,
+            append,
             // We do not want to focus the entry on successive loads.
-            entryId: loadingState == LoadingState.INITIAL ? params.id : undefined
-        });
-        setShouldUpdateItems(false);
-
-        return () => {
-            if (selfoss.activeAjaxReq !== null) {
-                selfoss.activeAjaxReq.controller.abort();
+            entryId: append ? undefined : initialItemId,
+            setLoadingState: append ? setMoreLoadingState : setLoadingState,
+        }).then(() => {
+            if (currentTag !== null && !selfoss.db.isValidTag(currentTag)) {
+                selfoss.app.showError(selfoss.app._('error_unknown_tag') + ' ' + currentTag);
             }
-        };
-    }, [shouldUpdateItems]);
 
-    React.useEffect(() => {
-        const navSourcesExpandedListener = (event) => {
-            setNavSourcesExpanded(event.value);
-        };
-
-        // It might happen that values change between creating the component and setting up the event handlers.
-        navSourcesExpandedListener({ value: selfoss.navSourcesExpanded.value });
-
-        selfoss.navSourcesExpanded.addEventListener('change', navSourcesExpandedListener);
+            if (currentSource !== null && !selfoss.db.isValidSource(currentSource)) {
+                selfoss.app.showError(selfoss.app._('error_unknown_source') + ' ' + currentSource);
+            }
+        });
 
         return () => {
-            selfoss.navSourcesExpanded.removeEventListener('change', navSourcesExpandedListener);
+            abortController.abort();
         };
-    }, []);
+    }, [params.filter, currentTag, currentSource, initialNavSourcesExpanded, searchText, fromDatetime, fromId, initialItemId, setLoadingState]);
 
     React.useEffect(() => {
         // scroll load more
@@ -222,16 +244,54 @@ export function EntriesPage({ entries, hasMore, loadingState, setLoadingState, s
     // TODO: make this update when it changes
     const isOnline = selfoss.db.online;
 
+    const refreshOnClick = React.useCallback(
+        (event) => handleRefreshSource({ event, source: currentSource, setLoadingState, setNavExpanded, reload }),
+        [currentSource, setLoadingState, setNavExpanded, reload]
+    );
+
+    const moreOnClick = React.useCallback(
+        (event) => {
+            event.preventDefault();
+            const lastEntry = entries[entries.length - 1];
+
+            // Calculate offset.
+            setFromDatetime(lastEntry ? lastEntry.datetime : undefined);
+            setFromId(lastEntry ? lastEntry.id : undefined);
+        },
+        [entries, setFromDatetime, setFromId]
+    );
+
+    // Current time for calculating relative dates in items.
+    const [currentTime, setCurrentTime] = React.useState(null);
+    React.useEffect(() => {
+        setCurrentTime(new Date());
+
+        const tick = window.setInterval(() => {
+            setCurrentTime(new Date());
+        }, 60 * 1000);
+
+        return () => {
+            clearInterval(tick);
+        };
+    }, []);
+
+    const _ = React.useContext(LocalizationContext);
+
+    if (loadingState === LoadingState.LOADING) {
+        return (
+            <SpinnerBig />
+        );
+    }
+
     return (
         <React.Fragment>
-            {loadingState === LoadingState.LOADING ? <SpinnerBig /> : null}
             {currentSource !== null && allowedToUpdate && isOnline ?
                 <button
                     type="button"
                     className="refresh-source"
-                    onClick={(event) => handleRefreshSource({ event, fetchParams, setLoadingState, setNavExpanded })}
+                    onClick={refreshOnClick}
                 >
-                    {selfoss.ui._('source_refresh')}
+                    {_('source_refresh')}
                 </button>
                 : null
             }
@@ -239,6 +299,7 @@ export function EntriesPage({ entries, hasMore, loadingState, setLoadingState, s
                 <Item
                     key={entry.id}
                     item={entry}
+                    currentTime={currentTime}
                     selected={selectedEntry == entry.id}
                     expanded={expandedEntries[entry.id] ?? false}
                     setNavExpanded={setNavExpanded}
@@ -246,25 +307,25 @@ export function EntriesPage({ entries, hasMore, loadingState, setLoadingState, s
             ))}
             <div id="stream-buttons">
                 {loadingState === LoadingState.SUCCESS && entries.length === 0 ?
-                    <p aria-live="assertive" className="stream-empty">{selfoss.ui._('no_entries')}</p>
+                    <p aria-live="assertive" className="stream-empty">{_('no_entries')}</p>
                     : null}
                 {hasMore ?
                     <button
                         className={classNames({'stream-button': true, 'stream-more': true})}
                         accessKey="m"
-                        aria-label={selfoss.ui._('more')}
-                        onClick={moreLoadingState !== LoadingState.LOADING ? (event) => loadMore({ event, fetchParams, entries, setMoreLoadingState }) : null}
+                        aria-label={_('more')}
+                        onClick={moreLoadingState !== LoadingState.LOADING ? moreOnClick : null}
                     >
-                        {moreLoadingState !== LoadingState.LOADING ? <span>{selfoss.ui._('more')}</span> : <Spinner size="3x" />}
+                        {moreLoadingState !== LoadingState.LOADING ? <span>{_('more')}</span> : <Spinner size="3x" />}
                     </button>
                     : null}
                 {entries.length > 0 ?
                     <button
                         className="stream-button mark-these-read"
-                        aria-label={selfoss.ui._('markread')}
-                        onClick={() => selfoss.entriesPage.markVisibleRead()}
+                        aria-label={_('markread')}
+                        onClick={selfoss.entriesPage.markVisibleRead}
                     >
-                        <span>{selfoss.ui._('markread')}</span>
+                        <span>{_('markread')}</span>
                     </button>
                     : null
                 }
@@ -272,16 +333,28 @@ export function EntriesPage({ entries, hasMore, loadingState, setLoadingState, s
                     <button
                         className="stream-button stream-error"
                         aria-live="assertive"
-                        aria-label={selfoss.ui._('streamerror')}
-                        onClick={() => reloadList({ fetchParams })}
+                        aria-label={_('streamerror')}
+                        onClick={reload}
                     >
-                        {selfoss.ui._('streamerror')}
+                        {_('streamerror')}
                     </button>
                     : null}
             </div>
         </React.Fragment>
     );
 }
+
+EntriesPage.propTypes = {
+    entries: PropTypes.array.isRequired,
+    hasMore: PropTypes.bool.isRequired,
+    loadingState: PropTypes.oneOf(Object.values(LoadingState)).isRequired,
+    setLoadingState: PropTypes.func.isRequired,
+    selectedEntry: nullable(PropTypes.number).isRequired,
+    expandedEntries: PropTypes.objectOf(PropTypes.bool).isRequired,
+    setNavExpanded: PropTypes.func.isRequired,
+    navSourcesExpanded: PropTypes.bool.isRequired,
+    reload: PropTypes.func.isRequired,
+};
 
 const initialState = {
     entries: [],
@@ -293,7 +366,6 @@ const initialState = {
      */
     selectedEntry: null,
     expandedEntries: {},
-    shouldUpdateItems: true,
     loadingState: LoadingState.INITIAL
 };
 
@@ -301,6 +373,10 @@ export default class StateHolder extends React.Component {
     constructor(props) {
         super(props);
         this.state = initialState;
+
+        this.reload = this.reload.bind(this);
+        this.setLoadingState = this.setLoadingState.bind(this);
+        this.markVisibleRead = this.markVisibleRead.bind(this);
     }
 
     setEntries(entries) {
@@ -315,12 +391,24 @@ export default class StateHolder extends React.Component {
         this.setEntries((entries) => [...entries, ...extraEntries]);
     }
 
+    /**
+     * Make the given entry currently selected one.
+     * @param {number|function(number): number} id of entry to select, or a function that transforms a previous id into a new one
+     */
     setSelectedEntry(selectedEntry) {
         if (typeof selectedEntry === 'function') {
             this.setState({ selectedEntry: selectedEntry(this.state.selectedEntry) });
         } else {
             this.setState({ selectedEntry });
         }
+    }
+
+    /**
+     * Get the currently selected entry.
+     * @return {number}
+     */
+    getSelectedEntry() {
+        return this.state.selectedEntry;
     }
 
     setExpandedEntries(expandedEntries) {
@@ -347,6 +435,115 @@ export default class StateHolder extends React.Component {
         }
     }
 
+
+    /**
+     * Collapse all expanded entries.
+     */
+    collapseAllEntries() {
+        this.setExpandedEntries({});
+    }
+
+
+    /**
+     * Is given entry expanded?
+     * @param {number} id of entry to check
+     * @return {bool} whether it is expanded
+     */
+    isEntryExpanded(entry) {
+        return this.state.expandedEntries[entry] ?? false;
+    }
+
+
+    /**
+     * Toggle expanded state of given entry.
+     * @param {number} id of entry to toggle
+     */
+    toggleEntryExpanded(entry) {
+        if (!entry) {
+            return;
+        }
+
+        this.setEntryExpanded(entry, (expanded) => !(expanded ?? false));
+    }
+
+
+    /**
+     * Activate entry as if it were clicked.
+     * This will open it, focus it and based on the settings, mark it as read.
+     * @param {number} id of entry
+     */
+    activateEntry(id) {
+        const entry = document.querySelector(`.entry[data-entry-id="${id}"]`);
+
+        if (!this.isEntryExpanded(id)) {
+            entry.querySelector('.entry-title > .entry-title-link').click();
+        }
+    }
+
+
+    /**
+     * Deactivate entry, as if it were clicked.
+     * This will close it and maybe something more.
+     * @param {number} id of entry
+     */
+    deactivateEntry(id) {
+        const entry = document.querySelector(`.entry[data-entry-id="${id}"]`);
+
+        if (this.isEntryExpanded(id)) {
+            entry.querySelector('.entry-title > .entry-title-link').click();
+        }
+    }
+
+
+    starEntry(id, starred) {
+        this.setEntries((entries) =>
+            entries.map((entry) => {
+                if (entry.id === id) {
+                    return {
+                        ...entry,
+                        starred
+                    };
+                } else {
+                    return entry;
+                }
+            })
+        );
+    }
+
+
+    markEntry(id, unread) {
+        this.setEntries((entries) =>
+            entries.map((entry) => {
+                if (entry.id === id) {
+                    return {
+                        ...entry,
+                        unread
+                    };
+                } else {
+                    return entry;
+                }
+            })
+        );
+    }
+
+
+    refreshEntryStatuses(entryStatuses) {
+        this.state.entries.forEach((entry) => {
+            const { id } = entry;
+            var newStatus = false;
+            entryStatuses.some(function(entryStatus) {
+                if (entryStatus.id == id) {
+                    newStatus = entryStatus;
+                }
+                return newStatus;
+            });
+            if (newStatus) {
+                this.starEntry(id, newStatus.starred);
+                this.markEntry(id, newStatus.unread);
+            }
+        });
+    }
+
     setHasMore(hasMore) {
         if (typeof hasMore === 'function') {
             this.setState({ hasMore: hasMore(this.state.hasMore) });
@@ -361,10 +558,6 @@ export default class StateHolder extends React.Component {
         } else {
             this.setState({ loadingState });
         }
-    }
-
-    setShouldUpdateItems(shouldUpdateItems) {
-        this.setState({ shouldUpdateItems });
     }
 
     getActiveTag() {
@@ -438,7 +631,7 @@ export default class StateHolder extends React.Component {
         this.setLoadingState(LoadingState.LOADING);
         this.setEntries(markedEntries);
 
-        const unreadstats = selfoss.unreadItemsCount.value - ids.length;
+        const unreadstats = selfoss.app.state.unreadItemsCount - ids.length;
 
         if (selfoss.db.enableOffline.value) {
             selfoss.refreshUnread(unreadstats);
@@ -456,15 +649,22 @@ export default class StateHolder extends React.Component {
                 }));
                 selfoss.dbOffline.enqueueStatuses(statuses);
             }).catch((error) => {
+                if (error instanceof HttpError && error.response.status === 403) {
+                    selfoss.history.push('/login');
+                    // TODO: Use location state once we switch to BrowserRouter
+                    selfoss.app.setLoginFormError(selfoss.app._('error_session_expired'));
+                    return;
+                }
+
                 this.setLoadingState(LoadingState.SUCCESS);
                 this.setEntries(oldEntries);
                 this.setHasMore(hadMore);
-                selfoss.ui.showError(selfoss.ui._('error_mark_items') + ' ' + error.message);
+                selfoss.app.showError(selfoss.app._('error_mark_items') + ' ' + error.message);
             });
         });
     }
 
-    reloadList() {
+    reload() {
         this.setState(initialState);
     }
 
@@ -476,11 +676,17 @@ export default class StateHolder extends React.Component {
                 expandedEntries={this.state.expandedEntries}
                 hasMore={this.state.hasMore}
                 loadingState={this.state.loadingState}
-                setLoadingState={this.setLoadingState.bind(this)}
-                shouldUpdateItems={this.state.shouldUpdateItems}
-                setShouldUpdateItems={this.setShouldUpdateItems.bind(this)}
+                setLoadingState={this.setLoadingState}
                 setNavExpanded={this.props.setNavExpanded}
+                navSourcesExpanded={this.props.navSourcesExpanded}
+                reload={this.reload}
             />
         );
     }
 }
+
+StateHolder.propTypes = {
+    match: PropTypes.object.isRequired,
+    setNavExpanded: PropTypes.func.isRequired,
+    navSourcesExpanded: PropTypes.bool.isRequired,
+};
