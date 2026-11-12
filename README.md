@@ -1,19 +1,25 @@
-# selfoss 2.19-SNAPSHOT
+# selfoss 2.20-SNAPSHOT
 
 selfoss is a multipurpose RSS reader and feed aggregation web application. It allows you to easily follow updates from different web sites, social networks and other platforms, all in single place. It is written in PHP, allowing you to run it basically anywhere.
 
 For more information visit our [web site](https://selfoss.aditu.de).
 
+
+## Status
+
+selfoss is currently maintained by Jan Tojnar in his free time. Due to the [limited capacity](https://github.com/jtojnar/jtojnar), maintenance is prioritized over new features. Pull requests are welcome, see the [Contributing](CONTRIBUTING.md) guide.
+
+
 ## Download
 
 * [Stable releases](https://github.com/fossar/selfoss/releases) – if you just want to use selfoss.
-* [Development builds](https://cloudsmith.io/~fossar/repos/selfoss-git/packages/) ([latest](https://cloudsmith.io/~fossar/repos/selfoss-git/packages/?q=version%3Alatest)) – if you want to try unreleased features or bug fixes, or help testing them. Hosted by [Cloudsmith](https://cloudsmith.com)
+* [Development builds](https://cloudsmith.io/~fossar/repos/selfoss-git/packages/) – if you want to try unreleased features or bug fixes, or help testing them. Hosted by [Cloudsmith](https://cloudsmith.com)
 * [Git-tracked source code](https://github.com/fossar/selfoss) – if you want to join selfoss development. Some [assembly](#development) required.
 
 
 ## Installation
 
-1. Upload all files of this directory (IMPORTANT: also upload the invisible `.htaccess` files).
+1. Copy all files of this directory (IMPORTANT: also copy the invisible `.htaccess` files) to a document root of a PHP server.
 2. Make the directories `data/cache`, `data/favicons`, `data/logs`, `data/thumbnails` and `data/sqlite` writeable.
 3. Insert database access data in `config.ini` (see below). You do not need to change anything if you want to use SQLite.
 4. You do not need to create the database tables, they will be created automatically (ensure that your database user is allowed to create triggers).
@@ -21,7 +27,7 @@ For more information visit our [web site](https://selfoss.aditu.de).
 
 If you obtained selfoss using Git, some more steps will be required. See the [development](#development) section.
 
-For further questions or on any problem use our support forum: https://selfoss.aditu.de/forum/
+For further questions or on any problem use our support forum: https://forum.selfoss.aditu.de/
 
 
 ## Configuration
@@ -37,7 +43,7 @@ No configuration is needed to use selfoss but you can customize the settings as 
 
 1. Backup your database and your `data/` directory.
 2. (IMPORTANT: do NOT delete the `data/` directory) delete all old files and directories excluding the directory `data/` and the file `config.ini`
-3. Upload all new files and directories excluding the `data/` directory (IMPORTANT: also upload the invisible `.htaccess` files).
+3. Copy all new files and directories excluding the `data/` directory (IMPORTANT: also copy the invisible `.htaccess` files) to your selfoss root.
 4. Consult the [NEWS file](NEWS.md) to learn about backwards incompatible changes.
 5. Clean your browser cache.
 6. Insert your current database connection and your individual configuration in `config.ini`. Important: we change the `config.ini` and add new options in newer versions. You have to update the `config.ini` too.
@@ -51,7 +57,7 @@ For further questions or on any problem use our support forum: https://selfoss.a
 ## Support
 
 * [Issue tracker](https://github.com/fossar/selfoss/issues) for reporting problems and requesting new features
-* [Forum](https://selfoss.aditu.de/forum/) for general questions about usage
+* [Forum](https://forum.selfoss.aditu.de/) for general questions about usage
 * [Chat on Gitter](https://gitter.im/fossar/selfoss) (or [`#selfoss:matrix.org` mirror](https://matrix.to/#/#selfoss:matrix.org)) for discussing selfoss development or just about anything
 
 
@@ -62,16 +68,16 @@ Selfoss supports importing OPML files. Find the OPML export in the old applicati
 
 ## Third-party Apps
 
-We recommend [Reader For Selfoss](https://github.com/aminecmi/readerforselfoss) for Android devices.
+We recommend [Reader For Selfoss](https://f-droid.org/packages/bou.amine.apps.readerforselfossv2.android) for Android devices.
 
 
 ## Development
 
 Selfoss uses [composer](https://getcomposer.org/) and [npm](https://www.npmjs.com/get-npm) for installing external libraries. When you clone the repository you have to issue `composer install` to retrieve the external sources.
 
-For the client side, you will also need JavaScript dependencies installed by calling `npm install` in the `assets` directory. You can use `npm run install-dependencies` as a shortcut for installing both sets of dependencies.
+For the client side, you will also need JavaScript dependencies installed by calling `npm install` in the `client/` directory. You can use `npm run install-dependencies` as a shortcut for installing both sets of dependencies.
 
-We use [Parcel](https://parceljs.org/) (installed by the command above) to build the client side of selfoss. Every time anything in `assets` directory changes, you will need to run `npm run build` for the client to be built and installed into the `public` directory. When developing, you can also use `npm run dev`; it will watch for asset changes, rebuild the bundles as needed, and reload selfoss automatically. Upon switching between `npm run dev` and `npm run build`, you may need to delete `assets/.cache`.
+We use [Parcel](https://parceljs.org/) (installed by the command above) to build the client side of selfoss. Every time anything in `client/` directory changes, you will need to run `npm run build` for the client to be built and installed into the `public` directory. When developing, you can also use `npm run dev`; it will watch for asset changes, rebuild the bundles as needed, and reload selfoss automatically. Upon switching between `npm run dev` and `npm run build`, you may need to delete `client/.cache`.
 
 If you want to create a package with all the dependencies bundled, you can run `npm run dist` command to produce a zipball.
 
@@ -89,17 +95,15 @@ Very special thanks to all contributors of pull requests here on [GitHub](https:
 
 Special thanks to the great programmers of these libraries used by selfoss:
 
-* [FatFree PHP Framework](https://fatfreeframework.com/)
 * [SimplePie](http://simplepie.org/)
-* [jQuery](https://jquery.com/)
 * [WideImage](http://wideimage.sourceforge.net/)
 * [htmLawed](http://www.bioinformatics.org/phplabware/internal_utilities/htmLawed/)
 * [PHP Universal Feed Generator](https://github.com/ajaxray/FeedWriter)
 * [Elphin IcoFileLoader](https://github.com/lordelph/icofileloader)
-* [jQuery hotkeys](https://github.com/tzuryby/jquery.hotkeys)
-* [Spectrum Colorpicker](https://github.com/bgrins/spectrum)
 * [Graby](https://github.com/j0k3r/graby)
 * [FullTextRSS filters](http://help.fivefilters.org/customer/portal/articles/223153-site-patterns)
+* [yet-another-react-lightbox](https://github.com/igordanchenko/yet-another-react-lightbox)
+* [Tracy](https://tracy.nette.org/)
 
 Icon made by http://blackbooze.com/
 

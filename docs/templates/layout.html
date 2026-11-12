@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <title>{% block title %}{{ config.title }}{% endblock title %}</title>
+    <title>{% block title %}{% endblock title %}{% if current_path != '/' %} – {{ config.title }}{% endif %}</title>
 
     <meta charset="utf-8">
     <meta name="copyright" content="{{ config.extra.author }}">
@@ -19,18 +19,19 @@
 <body class="{% if current_path == '/' %}homepage{% endif %}">
 
     <!-- header -->
-    <div id="header" class="{% if current_path == '/' %}header-homepage{% endif %}">
-        <h1 id="header-name"><a href="/"><span>selfoss</span></a></h1>
+    <div class="header {% if current_path == '/' %}header-homepage{% endif %}">
+        <h1 class="header-name"><a href="/"><span>selfoss</span></a></h1>
 
-        <ul id="header-navigation">
+        <ul class="header-navigation">
             <li><a href="{{ get_url(path='@/_index.md#screenshots') }}">screenshots</a></li>
-            <li><a href="{{ get_url(path='@/_index.md#documentation') }}">documentation</a></li>
+            <li><a href="{{ get_url(path='@/docs/_index.md') }}">documentation</a></li>
             <li><a href="{{ get_url(path='@/docs/project/credits.md') }}">about</a></li>
-            <li><a href="/forum">forum</a></li>
-            <li><a href="https://github.com/fossar/selfoss/releases/download/{{ config.extra.current_version }}/selfoss-{{ config.extra.current_version }}.zip">download</a></li>
+            <li><a href="https://forum.selfoss.aditu.de/">forum</a></li>
+            <li class="nav-forge"><a href="https://github.com/fossar/selfoss">source code</a></li>
+            <li><a href="https://github.com/fossar/selfoss/releases/download/{{ config.extra.current_stable_version }}/selfoss-{{ config.extra.current_stable_version }}.zip">download</a></li>
         </ul>
 
-        <a id="header-fork" href="https://github.com/fossar/selfoss"></a>
+        <a class="header-fork" href="https://github.com/fossar/selfoss"><img src="{{ get_url(path='images/forkme.svg') }}" alt="Fork me on GitHub"></a>
     </div>
 
     {% block post_header %}
@@ -52,7 +53,7 @@
     </div>
 
 
-    <div id="footer">
+    <div class="footer">
         <p>
             <a href="https://github.com/fossar/selfoss">Github</a>
             |
@@ -73,18 +74,22 @@
     <script type="text/javascript" src="{{ get_url(path='javascript/base.js') }}"></script>
 
 
-    <!-- Piwik -->
-    <script type="text/javascript">
-    var pkBaseURL = (("https:" == document.location.protocol) ? "https://piwik.aditu.de/" : "http://piwik.aditu.de/");
-    document.write(unescape("%3Cscript src='" + pkBaseURL + "piwik.js' type='text/javascript'%3E%3C/script%3E"));
-    </script><script type="text/javascript">
-    try {
-    var piwikTracker = Piwik.getTracker(pkBaseURL + "piwik.php", 7);
-    piwikTracker.trackPageView();
-    piwikTracker.enableLinkTracking();
-    } catch( err ) {}
-    </script><noscript><p><img src="http://piwik.aditu.de/piwik.php?idsite=7" style="border:0" alt=""></p></noscript>
-    <!-- End Piwik Tracking Code -->
+    <!-- Matomo -->
+    <script>
+    var _paq = window._paq = window._paq || [];
+    /* tracker methods like "setCustomDimension" should be called before "trackPageView" */
+    _paq.push(['trackPageView']);
+    _paq.push(['enableLinkTracking']);
+    (function() {
+        var u="https://matomo.aditu.de/";
+        _paq.push(['setTrackerUrl', u+'matomo.php']);
+        _paq.push(['setSiteId', '7']);
+        var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+        g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s);
+    })();
+    </script>
+    <noscript><p><img referrerpolicy="no-referrer-when-downgrade" src="https://matomo.aditu.de/matomo.php?idsite=7&amp;rec=1" style="border:0;" alt="" /></p></noscript>
+    <!-- End Matomo Code -->
     {% endblock scripts %}
 </body>
 </html>

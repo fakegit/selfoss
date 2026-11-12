@@ -1,6 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\rss;
+
+use spouts\Parameter;
 
 /**
  * Plugin for fetching the news from golem with the full text
@@ -10,17 +14,14 @@ namespace spouts\rss;
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
 class golem extends fulltextrss {
-    /** @var string name of spout */
-    public $name = '[German] golem.de';
+    public string $name = '[German] golem.de';
 
-    /** @var string description of this source type */
-    public $description = 'Fetch the golem news with full content (not only the header as content).';
+    public string $description = 'Fetch the golem news with full content (not only the header as content).';
 
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'section' => [
             'title' => 'Section',
-            'type' => 'select',
+            'type' => Parameter::TYPE_SELECT,
             'values' => [
                 'main' => 'All',
                 'audiovideo' => 'Audio/Video',
@@ -52,7 +53,7 @@ class golem extends fulltextrss {
     /**
      * addresses of feeds for the sections
      */
-    private $feedUrls = [
+    private const FEED_URLS = [
         'main' => 'https://rss.golem.de/rss.php?feed=RSS2.0',
         'audiovideo' => 'https://rss.golem.de/rss.php?tp=av&feed=RSS2.0',
         'foto' => 'https://rss.golem.de/rss.php?tp=foto&feed=RSS2.0',
@@ -75,11 +76,11 @@ class golem extends fulltextrss {
         'forum' => 'https://forum.golem.de/rss.php?feed=RSS2.0',
     ];
 
-    public function load(array $params) {
+    public function load(array $params): void {
         parent::load(['url' => $this->getXmlUrl($params)]);
     }
 
-    public function getXmlUrl(array $params) {
-        return $this->feedUrls[$params['section']];
+    public function getXmlUrl(array $params): string {
+        return self::FEED_URLS[$params['section']];
     }
 }

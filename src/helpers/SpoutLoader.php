@@ -1,8 +1,10 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
 
-use Dice\Dice;
+namespace Selfoss\helpers;
+
+use Psr\Container\ContainerInterface;
 use spouts\spout;
 
 /**
@@ -13,24 +15,22 @@ use spouts\spout;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class SpoutLoader {
-    /** @var ?array<class-string<spout>, spout> array of available spouts */
-    private $spouts = null;
+final class SpoutLoader {
+    /** @var ?array<class-string<spout<mixed>>, spout<mixed>> array of available spouts */
+    private ?array $spouts = null;
 
-    /** @var Dice dependency injection container */
-    private $dic;
-
-    public function __construct(Dice $dice) {
-        $this->dic = $dice;
+    public function __construct(
+        private readonly ContainerInterface $container
+    ) {
     }
 
     /**
      * returns all available spouts
      *
-     * @return array<class-string<spout>, spout> available spouts
+     * @return array<class-string<spout<mixed>>, spout<mixed>> available spouts
      */
-    public function all() {
-        $this->readSpouts();
+    public function all(): array {
+        $this->spouts ??= $this->readSpouts();
 
         return $this->spouts;
     }
@@ -40,22 +40,22 @@ class SpoutLoader {
      *
      * @param string $spout a given spout type
      *
-     * @return ?spout an instance of the spout, null if this spout doesn't exist
+     * @return ?spout<mixed> an instance of the spout, null if this spout doesn't exist
      */
-    public function get($spout) {
+    public function get(string $spout): ?spout {
         if (!class_exists($spout)) {
             return null;
         }
 
         try {
-            $class = $this->dic->create($spout);
+            $class = $this->container->get($spout);
 
-            if (is_subclass_of($class, spout::class)) {
+            if ($class instanceof spout) {
                 return $class;
-            } else {
-                return null;
             }
-        } catch (\ReflectionException $e) {
+
+            return null;
+        } catch (\ReflectionException) {
             return null;
         }
     }
@@ -67,44 +67,45 @@ class SpoutLoader {
     /**
      * reads all spouts
      *
-     * @return void
+     * @return array<class-string<spout<mixed>>, spout<mixed>>
      */
-    protected function readSpouts() {
-        if ($this->spouts === null) {
-            $this->spouts = $this->loadClasses(__DIR__ . '/../spouts', spout::class);
+    private function readSpouts(): array {
+        $spouts = $this->loadClasses(__DIR__ . '/../spouts', spout::class);
 
-            // sort spouts by name
-            uasort($this->spouts, ['self', 'compareSpoutsByName']);
-        }
+        // sort spouts by name
+        uasort($spouts, [self::class, 'compareSpoutsByName']);
+
+        return $spouts;
     }
 
     /**
      * returns all classes which extends a given class
      *
-     * @template P
+     * @template P of spout
      *
      * @param string $location the path where all spouts in
      * @param class-string<P> $parentClassName the parent class which files must extend
      *
      * @return array<class-string<P>, P> list of instantiated spouts associated to their class names
      */
-    protected function loadClasses($location, $parentClassName) {
+    private function loadClasses(string $location, string $parentClassName): array {
         $return = [];
 
-        foreach (scandir($location) as $dir) {
-            if (is_dir($location . '/' . $dir) && substr($dir, 0, 1) !== '.') {
+        foreach (new \DirectoryIterator($location) as $dirInfo) {
+            if ($dirInfo->isDir() && !$dirInfo->isDot()) {
                 // search for spouts
-                foreach (scandir($location . '/' . $dir) as $file) {
+                foreach (new \DirectoryIterator($dirInfo->getPathname()) as $fileInfo) {
+                    $name = $fileInfo->getFilename();
                     // only scan visible .php files
-                    if (is_file($location . '/' . $dir . '/' . $file) && substr($file, 0, 1) !== '.' && strpos($file, '.php') !== false) {
+                    if ($fileInfo->isFile() && !str_starts_with($name, '.') && $fileInfo->getExtension() === 'php') {
                         // create reflection class
                         /** @var class-string<P> */
-                        $className = 'spouts\\' . $dir . '\\' . str_replace('.php', '', $file);
+                        $className = 'spouts\\' . $dirInfo->getFilename() . '\\' . $fileInfo->getBasename('.php');
 
                         // register widget
                         if (is_subclass_of($className, $parentClassName)) {
                             /** @var P */
-                            $class = $this->dic->create($className);
+                            $class = $this->container->get($className);
                             $return[$className] = $class;
                         }
                     }
@@ -118,12 +119,10 @@ class SpoutLoader {
     /**
      * compare spouts by name
      *
-     * @param spout $spout1 Spout 1
-     * @param spout $spout2 Spout 2
-     *
-     * @return int
+     * @param spout<mixed> $spout1 Spout 1
+     * @param spout<mixed> $spout2 Spout 2
      */
-    private static function compareSpoutsByName(spout $spout1, spout $spout2) {
+    private static function compareSpoutsByName(spout $spout1, spout $spout2): int {
         return strcasecmp($spout1->name, $spout2->name);
     }
 }

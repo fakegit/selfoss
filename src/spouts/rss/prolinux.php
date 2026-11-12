@@ -1,6 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\rss;
+
+use spouts\Parameter;
 
 /**
  * Plugin for fetching the news from pro-linux with the full text.
@@ -13,17 +17,14 @@ namespace spouts\rss;
  * @author     Sebastian Gibb <mail@sebastiangibb.de>
  */
 class prolinux extends fulltextrss {
-    /** @var string name of spout */
-    public $name = '[German] pro-linux.de';
+    public string $name = '[German] pro-linux.de';
 
-    /** @var string description of this source type */
-    public $description = 'Fetch the pro-linux news with full content (not only the header as content).';
+    public string $description = 'Fetch the pro-linux news with full content (not only the header as content).';
 
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'section' => [
             'title' => 'Section',
-            'type' => 'select',
+            'type' => Parameter::TYPE_SELECT,
             'values' => [
                 'main' => 'Alles',
                 'news' => 'Nachrichten/Artikel',
@@ -41,7 +42,7 @@ class prolinux extends fulltextrss {
     /**
      * addresses of feeds for the sections
      */
-    private $feedUrls = [
+    private const FEED_URLS = [
         'main' => 'http://www.pro-linux.de/NB3/rss/1/4/atom_alles.xml',
         'news' => 'http://www.pro-linux.de/NB3/rss/2/4/atom_aktuell.xml',
         'polls' => 'http://www.pro-linux.de/NB3/rss/3/4/atom_umfragen.xml',
@@ -50,11 +51,11 @@ class prolinux extends fulltextrss {
         'comments' => 'http://www.pro-linux.de/NB3/rss/6/4/atom_kommentare.xml',
     ];
 
-    public function load(array $params) {
+    public function load(array $params): void {
         parent::load(['url' => $this->getXmlUrl($params)]);
     }
 
-    public function getXmlUrl(array $params) {
-        return $this->feedUrls[$params['section']];
+    public function getXmlUrl(array $params): string {
+        return self::FEED_URLS[$params['section']];
     }
 }

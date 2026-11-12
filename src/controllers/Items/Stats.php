@@ -1,56 +1,39 @@
 <?php
 
-namespace controllers\Items;
+declare(strict_types=1);
 
-use helpers\Authentication;
-use helpers\View;
+namespace Selfoss\controllers\Items;
+
+use Selfoss\daos;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\View;
 
 /**
  * Controller for viewing item statistics
  */
-class Stats {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var \daos\Items items */
-    private $itemsDao;
-
-    /** @var \daos\Sources sources */
-    private $sourcesDao;
-
-    /** @var \controllers\Tags tags controller */
-    private $tagsController;
-
-    /** @var \daos\Tags tags */
-    private $tagsDao;
-
-    /** @var View view helper */
-    private $view;
-
-    public function __construct(Authentication $authentication, \daos\Items $itemsDao, \daos\Sources $sourcesDao, \controllers\Tags $tagsController, \daos\Tags $tagsDao, View $view) {
-        $this->authentication = $authentication;
-        $this->itemsDao = $itemsDao;
-        $this->sourcesDao = $sourcesDao;
-        $this->tagsController = $tagsController;
-        $this->tagsDao = $tagsDao;
-        $this->view = $view;
+final readonly class Stats {
+    public function __construct(
+        private Authentication $authentication,
+        private daos\Items $itemsDao,
+        private daos\Sources $sourcesDao,
+        private daos\Tags $tagsDao,
+        private View $view
+    ) {
     }
 
     /**
      * returns current basic stats
      * json
-     *
-     * @return void
      */
-    public function stats() {
-        $this->authentication->needsLoggedInOrPublicMode();
+    public function stats(): void {
+        $this->authentication->ensureCanRead();
 
         $stats = $this->itemsDao->stats();
 
         $tags = $this->tagsDao->getWithUnread();
 
         foreach ($tags as $tag) {
-            if (strpos($tag['tag'], '#') !== 0) {
+            if (!str_starts_with($tag['tag'], '#')) {
                 continue;
             }
             $stats['unread'] -= $tag['unread'];

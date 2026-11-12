@@ -1,11 +1,15 @@
 <?php
 
-namespace controllers;
+declare(strict_types=1);
 
-use Base;
-use helpers\Authentication;
-use helpers\SpoutLoader;
-use helpers\View;
+namespace Selfoss\controllers;
+
+use InvalidArgumentException;
+use Selfoss\daos;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\Misc;
+use Selfoss\helpers\SpoutLoader;
+use Selfoss\helpers\View;
 
 /**
  * Controller for sources handling
@@ -14,38 +18,22 @@ use helpers\View;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Sources {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var \daos\Sources sources */
-    private $sourcesDao;
-
-    /** @var SpoutLoader spout loader */
-    private $spoutLoader;
-
-    /** @var \daos\Tags tags */
-    private $tagsDao;
-
-    /** @var View view helper */
-    private $view;
-
-    public function __construct(Authentication $authentication, \daos\Sources $sourcesDao, SpoutLoader $spoutLoader, \daos\Tags $tagsDao, View $view) {
-        $this->authentication = $authentication;
-        $this->sourcesDao = $sourcesDao;
-        $this->spoutLoader = $spoutLoader;
-        $this->tagsDao = $tagsDao;
-        $this->view = $view;
+final readonly class Sources {
+    public function __construct(
+        private Authentication $authentication,
+        private daos\Sources $sourcesDao,
+        private SpoutLoader $spoutLoader,
+        private daos\Tags $tagsDao,
+        private View $view
+    ) {
     }
 
     /**
      * list all available sources
      * json
-     *
-     * @return void
      */
-    public function show() {
-        $this->authentication->needsLoggedIn();
+    public function show(): void {
+        $this->authentication->ensureIsPrivileged();
 
         // get available spouts
         $spouts = $this->spoutLoader->all();
@@ -65,29 +53,11 @@ class Sources {
     }
 
     /**
-     * add new source
-     * json
-     *
-     * @return void
-     */
-    public function add() {
-        $this->authentication->needsLoggedIn();
-
-        $spouts = $this->spoutLoader->all();
-
-        $this->view->jsonSuccess([
-            'spouts' => $spouts,
-        ]);
-    }
-
-    /**
      * render spouts params
      * json
-     *
-     * @return void
      */
-    public function params() {
-        $this->authentication->needsLoggedIn();
+    public function params(): void {
+        $this->authentication->ensureIsPrivileged();
 
         if (!isset($_GET['spout'])) {
             $this->view->error('no spout type given');
@@ -100,7 +70,7 @@ class Sources {
             $this->view->error('invalid spout type given');
         }
 
-        $id = 'new-' . rand();
+        $id = 'new-' . random_int(0, mt_getrandmax());
         $this->view->jsonSuccess([
             'id' => $id,
             'spout' => $spout,
@@ -111,17 +81,14 @@ class Sources {
      * delete source
      * json
      *
-     * @param Base $f3 fatfree base instance
-     * @param array $params query string parameters
-     *
-     * @return void
+     * @param string $id ID of source to remove
      */
-    public function remove(Base $f3, array $params) {
-        $this->authentication->needsLoggedIn();
+    public function remove(string $id): void {
+        $this->authentication->ensureIsPrivileged();
 
-        $id = $params['id'];
-
-        if (!$this->sourcesDao->isValid('id', $id)) {
+        try {
+            $id = Misc::forceId($id);
+        } catch (InvalidArgumentException) {
             $this->view->error('invalid id given');
         }
 
@@ -139,11 +106,9 @@ class Sources {
     /**
      * returns all available sources
      * json
-     *
-     * @return void
      */
-    public function listSources() {
-        $this->authentication->needsLoggedIn();
+    public function listSources(): void {
+        $this->authentication->ensureIsPrivileged();
 
         // load sources
         $sources = $this->sourcesDao->getWithIcon();
@@ -151,7 +116,7 @@ class Sources {
         // get last icon
         foreach ($sources as &$source) {
             $source['params'] = json_decode(html_entity_decode($source['params']), true);
-            $source['error'] = $source['error'] === null ? '' : $source['error'];
+            $source['error'] ??= '';
         }
 
         $this->view->jsonSuccess($sources);
@@ -160,11 +125,9 @@ class Sources {
     /**
      * returns all available spouts
      * json
-     *
-     * @return void
      */
-    public function spouts() {
-        $this->authentication->needsLoggedIn();
+    public function spouts(): never {
+        $this->authentication->ensureIsPrivileged();
 
         $spouts = $this->spoutLoader->all();
         $this->view->jsonSuccess($spouts);
@@ -173,11 +136,9 @@ class Sources {
     /**
      * returns all sources with unread items
      * json
-     *
-     * @return void
      */
-    public function stats() {
-        $this->authentication->needsLoggedInOrPublicMode();
+    public function stats(): never {
+        $this->authentication->ensureCanRead();
 
         // load sources
         $sources = $this->sourcesDao->getWithUnread();

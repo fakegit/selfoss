@@ -1,66 +1,62 @@
 <?php
 
-namespace daos;
+declare(strict_types=1);
+
+namespace Selfoss\daos;
 
 /**
  * Interface describing database backend.
  */
 interface DatabaseInterface {
-    /**
-     * Execute SQL statement(s)
-     *
-     * @param string|string[] $cmds
-     * @param string|array $args
-     *
-     * @return array|int|false
-     */
-    public function exec($cmds, $args = null);
+    public const PARAM_INT = 1;
+    public const PARAM_BOOL = 2;
+    public const PARAM_CSV = 3;
+    public const PARAM_DATETIME = 4;
+    public const PARAM_NULL = 128;
 
     /**
-     * wrap insert statement to return id
+     * Execute SQL statement.
      *
-     * @param string $query sql statement
-     * @param array $params sql params
-     *
-     * @return int id after insert
+     * @param array<string, mixed> $args
      */
-    public function insert($query, array $params);
+    public function execute(string $cmd, array $args = []): \PDOStatement;
+
+    /**
+     * Execute SQL statement and fetch the result as an associative array (when applicable).
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function exec(string $cmd, array $args = []): array;
 
     /**
      * Quote string
-     *
-     * @param mixed $value
-     * @param int $type
-     *
-     * @return string
      */
-    public function quote($value, $type = \PDO::PARAM_STR);
+    public function quote(mixed $value, int $type = \PDO::PARAM_STR): string;
 
     /**
      * Begin SQL transaction
-     *
-     * @return bool
      */
-    public function begin();
+    public function beginTransaction(): bool;
 
     /**
      * Rollback SQL transaction
-     *
-     * @return bool
      */
-    public function rollback();
+    public function rollBack(): bool;
 
     /**
      * Commit SQL transaction
-     *
-     * @return bool
      */
-    public function commit();
+    public function commit(): bool;
 
     /**
      * Optimize database using its own optimize statement.
-     *
-     * @return void
      */
-    public function optimize();
+    public function optimize(): void;
+
+    /**
+     * Get the current version database schema.
+     */
+    public function getSchemaVersion(): int;
 }

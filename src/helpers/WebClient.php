@@ -1,12 +1,20 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
+
+namespace Selfoss\helpers;
 
 use Exception;
 use Fossar\GuzzleTranscoder\GuzzleTranscoder;
 use GuzzleHttp;
 use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\HttpFactory;
 use Monolog\Logger;
+use Override;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+use Selfoss\helpers\Configuration\LoggerLevel;
 
 /**
  * Helper class for web request
@@ -15,63 +23,76 @@ use Monolog\Logger;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Alexandre Rossi <alexandre.rossi@gmail.com>
  */
-class WebClient {
-    /** @var Configuration configuration */
-    private $configuration;
+class WebClient implements ClientInterface {
+    private ?GuzzleHttp\Client $httpClient = null;
 
-    /** @var GuzzleHttp\Client */
-    private $httpClient;
-
-    /** @var Logger */
-    private $logger;
-
-    public function __construct(Configuration $configuration, Logger $logger) {
-        $this->configuration = $configuration;
-        $this->logger = $logger;
+    public function __construct(
+        private readonly Configuration $configuration,
+        private readonly HttpFactory $httpFactory,
+        private readonly Logger $logger
+    ) {
     }
 
     /**
      * Provide a HTTP client for use by spouts
-     *
-     * @return GuzzleHttp\Client
      */
-    public function getHttpClient() {
-        if (!isset($this->httpClient)) {
-            $stack = HandlerStack::create();
-            $stack->push(new GuzzleTranscoder());
-
-            if ($this->configuration->loggerLevel === 'DEBUG') {
-                if ($this->configuration->debug === 0) {
-                    $logFormat = GuzzleHttp\MessageFormatter::SHORT;
-                } elseif ($this->configuration->debug === 1) {
-                    $logFormat = ">>>>>>>>\n{req_headers}\n<<<<<<<<\n{res_headers}\n--------\n{error}";
-                } else {
-                    $logFormat = GuzzleHttp\MessageFormatter::DEBUG;
-                }
-
-                $logger = GuzzleHttp\Middleware::log(
-                    $this->logger,
-                    new GuzzleHttp\MessageFormatter($logFormat),
-                    \Psr\Log\LogLevel::DEBUG
-                );
-                $stack->push($logger);
-            }
-
-            $httpClient = new GuzzleHttp\Client([
-                'allow_redirects' => [
-                    'track_redirects' => true,
-                ],
-                'headers' => [
-                    'User-Agent' => self::getUserAgent(),
-                ],
-                'handler' => $stack,
-                'timeout' => 60, // seconds
-            ]);
+    public function getHttpClient(): GuzzleHttp\Client {
+        if ($this->httpClient === null) {
+            $httpClient = new GuzzleHttp\Client($this->createHttpClientConfig());
 
             $this->httpClient = $httpClient;
         }
 
         return $this->httpClient;
+    }
+
+    /**
+     * Create a config for HTTP client for use by spouts.
+     *
+     * @return array<string, mixed> $config
+     */
+    public function createHttpClientConfig(): array {
+        $stack = HandlerStack::create();
+        $stack->push(new GuzzleTranscoder());
+
+        if ($this->configuration->loggerLevel === LoggerLevel::Debug) {
+            if ($this->configuration->debug === 0) {
+                $logFormat = GuzzleHttp\MessageFormatter::SHORT;
+            } elseif ($this->configuration->debug === 1) {
+                $logFormat = ">>>>>>>>\n{req_headers}\n<<<<<<<<\n{res_headers}\n--------\n{error}";
+            } else {
+                $logFormat = GuzzleHttp\MessageFormatter::DEBUG;
+            }
+
+            $logger = GuzzleHttp\Middleware::log(
+                $this->logger,
+                new GuzzleHttp\MessageFormatter($logFormat),
+                \Psr\Log\LogLevel::DEBUG
+            );
+            $stack->push($logger);
+        }
+
+        return [
+            'allow_redirects' => [
+                'track_redirects' => true,
+            ],
+            'headers' => [
+                'User-Agent' => self::getUserAgent(),
+            ],
+            'handler' => $stack,
+            'timeout' => 60, // seconds
+            'curl' => [
+                // Guzzle will not send Accept-Encoding by default.
+                // https://github.com/guzzle/guzzle/pull/3215
+                // Delegate choosing compression method to curl.
+                \CURLOPT_ACCEPT_ENCODING => '',
+                // Guzzle defaults to \CURL_HTTP_VERSION_1_1,
+                // which breaks servers that require HTTP 2.
+                // Delegate choosing protocol to curl.
+                \CURLOPT_HTTP_VERSION => \CURL_HTTP_VERSION_NONE,
+            ],
+            'version' => '2',
+        ];
     }
 
     /**
@@ -81,12 +102,10 @@ class WebClient {
      *
      * @return string the user agent string for this spout
      */
-    public function getUserAgent($agentInfo = null) {
+    public function getUserAgent(?array $agentInfo = null): string {
         $userAgent = 'Selfoss/' . SELFOSS_VERSION;
 
-        if ($agentInfo === null) {
-            $agentInfo = [];
-        }
+        $agentInfo ??= [];
 
         $agentInfo[] = '+https://selfoss.aditu.de';
 
@@ -96,17 +115,13 @@ class WebClient {
     /**
      * Retrieve content from url
      *
-     * @param string $url
      * @param ?string $agentInfo Extra user agent info to use in the request
      *
-     * @throws GuzzleHttp\Exception\RequestException When an error is encountered
+     * @throws GuzzleHttp\Exception\GuzzleException When an error is encountered
      * @throws Exception Unless 200 0K response is received
-     *
-     * @return string request data
      */
-    public function request($url, $agentInfo = null) {
-        $http = $this->getHttpClient();
-        $response = $http->get($url);
+    public function request(string $url, ?string $agentInfo = null): string {
+        $response = $this->sendRequest($this->httpFactory->createRequest('GET', $url));
         $data = (string) $response->getBody();
 
         if ($response->getStatusCode() !== 200) {
@@ -116,18 +131,25 @@ class WebClient {
         return $data;
     }
 
+    #[Override]
+    public function sendRequest(RequestInterface $request): ResponseInterface {
+        $http = $this->getHttpClient();
+
+        return $http->send($request);
+    }
+
     /**
      * Get effective URL of the response.
      * RedirectMiddleware will need to be enabled for this to work.
      *
      * @param string $url requested URL, to use as a fallback
-     * @param GuzzleHttp\Psr7\Response $response response to inspect
+     * @param ResponseInterface $response response to inspect
      *
      * @return string last URL we were redirected to
      */
-    public static function getEffectiveUrl($url, GuzzleHttp\Psr7\Response $response) {
+    public static function getEffectiveUrl(string $url, ResponseInterface $response): string {
         // Sequence of fetched URLs
-        $urlStack = array_merge([$url], $response->getHeader(\GuzzleHttp\RedirectMiddleware::HISTORY_HEADER));
+        $urlStack = array_merge([$url], $response->getHeader(GuzzleHttp\RedirectMiddleware::HISTORY_HEADER));
 
         return $urlStack[count($urlStack) - 1];
     }

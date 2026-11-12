@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\rss;
 
 /**
@@ -12,25 +14,22 @@ namespace spouts\rss;
  * @author     Daniel Seither <post@tiwoc.de>
  */
 class teltarif extends fulltextrss {
-    /** @var string name of spout */
-    public $name = '[German] teltarif.de';
+    public string $name = '[German] teltarif.de';
 
-    /** @var string description of this source type */
-    public $description = 'Fetch Telarif news with full content (not only the header as content).';
+    public string $description = 'Fetch Telarif news with full content (not only the header as content).';
 
-    /** @var array configurable parameters */
-    public $params = [];
+    public array $params = [];
 
     /**
      * addresses of feeds for the sections
      */
-    private $feedUrl = 'http://www.teltarif.de/feed/news/20.rss2';
+    private const FEED_URL = 'http://www.teltarif.de/feed/news/20.rss2';
 
-    public function load(array $params) {
+    public function load(array $params): void {
         parent::load(['url' => $this->getXmlUrl($params)]);
     }
 
-    public function getXmlUrl(array $params) {
-        return $this->feedUrl;
+    public function getXmlUrl(array $params): string {
+        return self::FEED_URL;
     }
 }

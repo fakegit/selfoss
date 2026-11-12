@@ -1,6 +1,8 @@
 <?php
 
-namespace daos\sqlite;
+declare(strict_types=1);
+
+namespace Selfoss\daos\sqlite;
 
 /**
  * Sqlite specific statements
@@ -9,16 +11,14 @@ namespace daos\sqlite;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Alexandre Rossi <alexandre.rossi@gmail.com>
  */
-class Statements extends \daos\mysql\Statements {
+final class Statements extends \Selfoss\daos\mysql\Statements {
     /**
      * Return the statement required to update a datetime column to the current
      * datetime.
      *
-     * @param string $column
-     *
      * @return string full statement
      */
-    public static function rowTouch($column) {
+    public static function rowTouch(string $column): string {
         return $column . '=datetime(\'now\')';
     }
 
@@ -30,18 +30,16 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string full statement
      */
-    public static function csvRowMatches($column, $value) {
+    public static function csvRowMatches(string $column, string $value): string {
         return "(',' || $column || ',') LIKE ('%,' || $value || ',%')";
     }
 
     /**
      * Convert boolean into a representation recognized by the database engine.
      *
-     * @param bool $bool
-     *
      * @return string representation of boolean
      */
-    public static function bool($bool) {
+    public static function bool(bool $bool): string {
         return $bool ? '1' : '0';
     }
 
@@ -53,7 +51,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string representation of datetime
      */
-    public static function datetime(\DateTime $date) {
+    public static function datetime(\DateTime $date): string {
         // SQLite does not support timezones.
         // The client previously sent the local timezone
         // but now it sends UTC time so we need to adjust it here
@@ -72,7 +70,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string expression for matching
      */
-    public static function matchesRegex($value, $regex) {
+    public static function matchesRegex(string $value, string $regex): string {
         // https://www.sqlite.org/lang_expr.html#the_like_glob_regexp_and_match_operators
         return $value . ' REGEXP ' . $regex;
     }

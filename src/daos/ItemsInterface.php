@@ -1,112 +1,96 @@
 <?php
 
-namespace daos;
+declare(strict_types=1);
+
+namespace Selfoss\daos;
 
 use DateTime;
+use DateTimeImmutable;
+use Selfoss\helpers\HtmlString;
 
 /**
  * Interface describing concrete DAO for working with items.
  */
 interface ItemsInterface {
     /**
-     * mark item as read
+     * Mark items as read.
      *
-     * @param int $id
-     *
-     * @return void
+     * @param int[] $ids
      */
-    public function mark($id);
+    public function mark(array $ids): void;
 
     /**
-     * mark item as unread
+     * Mark items as unread.
      *
-     * @param int $id
-     *
-     * @return void
+     * @param int[] $ids
      */
-    public function unmark($id);
+    public function unmark(array $ids): void;
 
     /**
      * starr item
      *
      * @param int $id the item
-     *
-     * @return void
      */
-    public function starr($id);
+    public function starr(int $id): void;
 
     /**
      * unstarr item
      *
      * @param int $id the item
-     *
-     * @return void
      */
-    public function unstarr($id);
+    public function unstarr(int $id): void;
 
     /**
      * add new item
      *
-     * @param array $values
-     *
-     * @return void
+     * @param array{datetime: \DateTimeInterface, title: HtmlString, content: HtmlString, thumbnail: ?string, icon: ?string, source: int, uid: string, link: string, author: ?string} $values
      */
-    public function add($values);
+    public function add(array $values): void;
 
     /**
      * checks whether an item with given
      * uid exists or not
-     *
-     * @param string $uid
-     *
-     * @return bool
      */
-    public function exists($uid);
+    public function exists(string $uid): bool;
 
     /**
      * search whether given uids are already in database or not
      *
-     * @param array $itemsInFeed list with ids for checking whether they are already in database or not
+     * @param string[] $itemsInFeed list with ids for checking whether they are already in database or not
      * @param int $sourceId the id of the source to search for the items
      *
-     * @return array with all existing uids from itemsInFeed (array (uid => id););
+     * @return array<string, int> with all existing uids from itemsInFeed (array (uid => id););
      */
-    public function findAll($itemsInFeed, $sourceId);
+    public function findAll(array $itemsInFeed, int $sourceId): array;
 
     /**
      * Update the time items were last seen in the feed to prevent unwanted cleanup.
      *
      * @param int[] $itemIds ids of items to update
-     *
-     * @return void
      */
-    public function updateLastSeen(array $itemIds);
+    public function updateLastSeen(array $itemIds): void;
 
     /**
      * cleanup orphaned and old items
      *
      * @param ?DateTime $date date to delete all items older than this value
-     *
-     * @return void
      */
-    public function cleanup(DateTime $date = null);
+    public function cleanup(?DateTime $date): void;
 
     /**
      * returns items
      *
-     * @param mixed $options search, offset and filter params
+     * @param ItemOptions $options search, offset and filter params
      *
-     * @return mixed items as array
+     * @return array<array{id: int, datetime: DateTime, title: string, content: string, unread: bool, starred: bool, source: int, thumbnail: string, icon: string, uid: string, link: string, updatetime: DateTime, author: string, sourcetitle: string, tags: string[]}> items as array
      */
-    public function get($options = []);
+    public function get(ItemOptions $options): array;
 
     /**
      * returns whether more items for last given
      * get call are available
-     *
-     * @return bool
      */
-    public function hasMore();
+    public function hasMore(): bool;
 
     /**
      * Obtain new or changed items in the database for synchronization with clients.
@@ -114,39 +98,24 @@ interface ItemsInterface {
      * @param int $sinceId id of last seen item
      * @param DateTime $notBefore cut off time stamp
      * @param DateTime $since timestamp of last seen item
-     * @param int $howMany
      *
-     * @return array of items
+     * @return array<array{id: int, datetime: DateTime, title: string, content: string, unread: bool, starred: bool, source: int, thumbnail: string, icon: string, uid: string, link: string, updatetime: DateTime, author: string, sourcetitle: string, tags: string[]}> of items
      */
-    public function sync($sinceId, DateTime $notBefore, DateTime $since, $howMany);
+    public function sync(int $sinceId, DateTime $notBefore, DateTime $since, int $howMany): array;
 
     /**
      * Lowest id of interest
      *
      * @return int lowest id of interest
      */
-    public function lowestIdOfInterest();
+    public function lowestIdOfInterest(): int;
 
     /**
      * Last id in db
      *
      * @return int last id in db
      */
-    public function lastId();
-
-    /**
-     * return all thumbnails
-     *
-     * @return string[] array with thumbnails
-     */
-    public function getThumbnails();
-
-    /**
-     * return all icons
-     *
-     * @return string[] array with all icons
-     */
-    public function getIcons();
+    public function lastId(): int;
 
     /**
      * return all thumbnails
@@ -155,7 +124,7 @@ interface ItemsInterface {
      *
      * @return bool true if thumbnail is still in use
      */
-    public function hasThumbnail($thumbnail);
+    public function hasThumbnail(string $thumbnail): bool;
 
     /**
      * return all icons
@@ -164,54 +133,40 @@ interface ItemsInterface {
      *
      * @return bool true if icon is still in use
      */
-    public function hasIcon($icon);
-
-    /**
-     * test if the value of a specified field is valid
-     *
-     * @param   string      $name
-     * @param   mixed       $value
-     *
-     * @return  bool
-     */
-    public function isValid($name, $value);
+    public function hasIcon(string $icon): bool;
 
     /**
      * returns the amount of entries in database which are unread
      *
      * @return int amount of entries in database which are unread
      */
-    public function numberOfUnread();
+    public function numberOfUnread(): int;
 
     /**
      * returns the amount of total, unread, starred entries in database
      *
-     * @return array mount of total, unread, starred entries in database
+     * @return array{total: int, unread: int, starred: int} mount of total, unread, starred entries in database
      */
-    public function stats();
+    public function stats(): array;
 
     /**
      * returns the datetime of the last item update or user action in db
-     *
-     * @return string timestamp
      */
-    public function lastUpdate();
+    public function lastUpdate(): ?DateTimeImmutable;
 
     /**
      * returns the statuses of items last update
      *
      * @param DateTime $since minimal date of returned items
      *
-     * @return array of unread, starred, etc. status of specified items
+     * @return array<array{id: int, unread: bool, starred: bool}> of unread, starred, etc. status of specified items
      */
-    public function statuses(DateTime $since);
+    public function statuses(DateTime $since): array;
 
     /**
      * bulk update of item status
      *
-     * @param array $statuses array of statuses updates
-     *
-     * @return void
+     * @param array<array{id: int, unread?: mixed, starred?: mixed, datetime?: string}> $statuses array of statuses updates
      */
-    public function bulkStatusUpdate(array $statuses);
+    public function bulkStatusUpdate(array $statuses): void;
 }

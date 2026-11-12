@@ -1,6 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\youtube;
+
+use Monolog\Logger;
+use Selfoss\helpers\FeedReader;
+use Selfoss\helpers\HtmlString;
+use Selfoss\helpers\Image;
+use SimplePie;
+use spouts\Item;
+use spouts\Parameter;
+use VStelmakh\UrlHighlight\UrlHighlight;
 
 /**
  * Spout for fetching a YouTube rss feed
@@ -8,33 +19,40 @@ namespace spouts\youtube;
  * @copyright  Copyright (c) Tobias Zeising (http://www.aditu.de)
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
+ *
  * @copywork   Arndt Staudinger <info@clucose.com> April 2013
  */
 class youtube extends \spouts\rss\feed {
-    /** @var string name of source */
-    public $name = 'YouTube';
+    public string $name = 'YouTube';
 
-    /** @var string description of this source type */
-    public $description = 'Follow videos from a YouTube channel or a playlist.';
+    public string $description = 'Follow videos from a YouTube channel or a playlist.';
 
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'channel' => [
             'title' => 'URL or username',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
     ];
 
-    public function load(array $params) {
+    public function __construct(
+        private readonly UrlHighlight $urlHighlight,
+        FeedReader $feed,
+        Image $imageHelper,
+        Logger $logger
+    ) {
+        parent::__construct($feed, $imageHelper, $logger);
+    }
+
+    public function load(array $params): void {
         $url = $this->getXmlUrl($params);
         parent::load(['url' => $url]);
     }
 
-    public function getXmlUrl(array $params) {
-        $urlOrUsername = $params['channel'];
+    public function getXmlUrl(array $params): string {
+        $urlOrUsername = (string) $params['channel'];
         if (preg_match('(^https?://www.youtube.com/channel/([a-zA-Z0-9_-]+)$)', $urlOrUsername, $matched)) {
             $id = $matched[1];
             $feed_type = 'channel_id';
@@ -47,6 +65,13 @@ class youtube extends \spouts\rss\feed {
         } elseif (preg_match('(^https?://www.youtube.com/playlist\?list=([a-zA-Z0-9_]+)$)', $urlOrUsername, $matched)) {
             $id = $matched[1];
             $feed_type = 'playlist_id';
+        } elseif (preg_match('(^@)', $urlOrUsername)) {
+            // https://www.youtube.com/handle
+            // Rely on feed discovery.
+            return 'https://www.youtube.com/' . $urlOrUsername;
+        } elseif (preg_match('(^https?://www.youtube.com/)', $urlOrUsername)) {
+            // Rely on feed discovery.
+            return $urlOrUsername;
         } else {
             $id = $urlOrUsername;
             $feed_type = 'user';
@@ -55,27 +80,32 @@ class youtube extends \spouts\rss\feed {
         return 'https://www.youtube.com/feeds/videos.xml?' . $feed_type . '=' . $id;
     }
 
-    public function getThumbnail() {
-        if ($this->items === null || !$this->valid()) {
-            return null;
+    /**
+     * @return \Generator<Item<SimplePie\Item>>
+     */
+    public function getItems(): iterable {
+        foreach (parent::getItems() as $item) {
+            $thumbnail = $this->getThumbnail($item->getExtraData());
+            $content = $this->getContent($item->getExtraData()) ?? HtmlString::fromRaw('');
+            yield $item->withContent($content)->withThumbnail($thumbnail);
+        }
+    }
+
+    private function getContent(SimplePie\Item $item): ?HtmlString {
+        // Each entry in YouTube’s RSS feed contains a media:group with media:description.
+        if (($firstEnclosure = $item->get_enclosure(0)) !== null) {
+            if (($description = $firstEnclosure->get_description()) !== null) {
+                return HtmlString::fromRaw(nl2br($this->urlHighlight->highlightUrls($description), false));
+            }
         }
 
-        $item = current($this->items);
+        return null;
+    }
 
-        // search enclosures (media tags)
-        if (count(@$item->get_enclosures()) > 0) {
-            if (@$item->get_enclosure(0)->get_thumbnail()) {
-                // thumbnail given
-                return @$item->get_enclosure(0)->get_thumbnail();
-            } elseif (@$item->get_enclosure(0)->get_link()) {
-                // link given
-                return @$item->get_enclosure(0)->get_link();
-            }
-        } else { // no enclosures: search image link in content
-            $image = \helpers\ImageUtils::findFirstImageSource(@$item->get_content());
-            if ($image !== null) {
-                return $image;
-            }
+    private function getThumbnail(SimplePie\Item $item): ?string {
+        // Each entry in YouTube’s RSS feed contains a media:group with media:thumbnail.
+        if (($firstEnclosure = $item->get_enclosure(0)) !== null) {
+            return $firstEnclosure->get_thumbnail();
         }
 
         return null;

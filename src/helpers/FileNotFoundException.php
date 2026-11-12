@@ -1,6 +1,8 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
 
-class FileNotFoundException extends \Exception {
+namespace Selfoss\helpers;
+
+final class FileNotFoundException extends \Exception {
 }

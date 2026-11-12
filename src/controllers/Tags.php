@@ -1,10 +1,13 @@
 <?php
 
-namespace controllers;
+declare(strict_types=1);
 
-use Base;
-use helpers\Authentication;
-use helpers\View;
+namespace Selfoss\controllers;
+
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\Request;
+use Selfoss\helpers\StringKeyedArray;
+use Selfoss\helpers\View;
 
 /**
  * Controller for tag access
@@ -13,24 +16,18 @@ use helpers\View;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Tags {
-    /** @var Authentication authentication helper */
-    private $authentication;
+// TODO: Make readonly.
+final class Tags {
+    /** @var ?StringKeyedArray<array{backColor: string, foreColor: string}> cache of tags and associated colors */
+    private ?StringKeyedArray $tagsColors = null;
 
-    /** @var \daos\Tags tags */
-    private $tagsDao;
-
-    /** @var View view helper */
-    private $view;
-
-    public function __construct(Authentication $authentication, \daos\Tags $tagsDao, View $view) {
-        $this->authentication = $authentication;
-        $this->tagsDao = $tagsDao;
-        $this->view = $view;
+    public function __construct(
+        private readonly Authentication $authentication,
+        private readonly Request $request,
+        private readonly \Selfoss\daos\Tags $tagsDao,
+        private readonly View $view
+    ) {
     }
-
-    /* @var ?array<string, array{backColor: string, foreColor: string}> cache of tags and associated colors */
-    protected $tagsColors = null;
 
     /**
      * returns item tags as HTML
@@ -38,19 +35,17 @@ class Tags {
      * @param string[] $itemTags tags for this item
      * @param ?array<array{tag: string, color: string}> $tags list of all the tags and their color
      *
-     * @return array<string, array{backColor: string, foreColor: string}>
+     * @return StringKeyedArray<array{backColor: string, foreColor: string}>
      */
-    public function tagsAddColors(array $itemTags, array $tags = null) {
+    public function tagsAddColors(array $itemTags, ?array $tags = null): StringKeyedArray {
         if ($tags === null) {
-            if ($this->tagsColors === null) {
-                $this->tagsColors = $this->getTagsWithColors($this->tagsDao->get());
-            }
+            $this->tagsColors ??= $this->getTagsWithColors($this->tagsDao->get());
         } else {
             $this->tagsColors = $this->getTagsWithColors($tags);
         }
 
-        // assign tag colors
-        $itemTagsWithColors = [];
+        /** @var StringKeyedArray<array{backColor: string, foreColor: string}> Tags with their associated colors */
+        $itemTagsWithColors = new StringKeyedArray();
         foreach ($itemTags as $tag) {
             $tag = trim($tag);
             if (strlen($tag) > 0 && isset($this->tagsColors[$tag])) {
@@ -63,22 +58,25 @@ class Tags {
 
     /**
      * set tag color
-     *
-     * @return void
      */
-    public function color(Base $f3) {
-        $this->authentication->needsLoggedIn();
+    public function color(): void {
+        $this->authentication->ensureIsPrivileged();
 
-        // read data
-        parse_str($f3->get('BODY'), $data);
+        $data = $this->request->getData();
 
-        $tag = $data['tag'];
-        $color = $data['color'];
+        if (!is_array($data)) {
+            $this->view->jsonError([
+                'error' => 'The request body needs to contain a dictionary/object.',
+            ]);
+        }
 
-        if (!isset($tag) || strlen(trim($tag)) === 0) {
+        $tag = isset($data['tag']) && ($trimmed = trim($data['tag'])) !== '' ? $trimmed : null;
+        $color = isset($data['color']) && ($trimmed = trim($data['color'])) !== '' ? $trimmed : null;
+
+        if ($tag === null) {
             $this->view->error('invalid or no tag given');
         }
-        if (!isset($color) || strlen(trim($color)) === 0) {
+        if ($color === null) {
             $this->view->error('invalid or no color given');
         }
 
@@ -90,12 +88,10 @@ class Tags {
 
     /**
      * returns all tags
-     * html
-     *
-     * @return void
+     * json
      */
-    public function listTags() {
-        $this->authentication->needsLoggedInOrPublicMode();
+    public function listTags(): never {
+        $this->authentication->ensureCanRead();
 
         $tags = $this->tagsDao->getWithUnread();
 
@@ -107,13 +103,16 @@ class Tags {
      *
      * @param array<array{tag: string, color: string}> $tags tags to colorize
      *
-     * @return array<string, array{backColor: string, foreColor: string}> tag color array
+     * @return StringKeyedArray<array{backColor: string, foreColor: string}> tag color array
      */
-    private function getTagsWithColors(array $tags) {
-        $assocTags = [];
+    private function getTagsWithColors(array $tags): StringKeyedArray {
+        /** @var StringKeyedArray<array{backColor: string, foreColor: string}> */
+        $assocTags = new StringKeyedArray();
         foreach ($tags as $tag) {
-            $assocTags[$tag['tag']]['backColor'] = $tag['color'];
-            $assocTags[$tag['tag']]['foreColor'] = \helpers\Color::colorByBrightness($tag['color']);
+            $assocTags[$tag['tag']] = [
+                'backColor' => $tag['color'],
+                'foreColor' => \Selfoss\helpers\Color::colorByBrightness($tag['color']),
+            ];
         }
 
         return $assocTags;

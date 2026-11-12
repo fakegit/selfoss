@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\deviantart;
 
 /**
@@ -10,20 +12,17 @@ namespace spouts\deviantart;
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
 class dailydeviations extends \spouts\rss\images {
-    /** @var string name of source */
-    public $name = 'DeviantArt: daily deviations';
+    public string $name = 'DeviantArt: daily deviations';
 
-    /** @var string description of this source type */
-    public $description = 'Get daily deviations on DeviantArt.';
+    public string $description = 'Get daily deviations on DeviantArt.';
 
-    /** @var array configurable parameters */
-    public $params = [];
+    public array $params = [];
 
-    public function load(array $params) {
+    public function load(array $params): void {
         parent::load(['url' => $this->getXmlUrl($params)]);
     }
 
-    public function getXmlUrl(array $params) {
+    public function getXmlUrl(array $params): string {
         return 'https://backend.deviantart.com/rss.xml?q=special%3Add&type=deviation&offset=0';
     }
 }

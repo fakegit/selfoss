@@ -1,8 +1,12 @@
 <?php
 
-namespace daos\sqlite;
+declare(strict_types=1);
+
+namespace Selfoss\daos\sqlite;
 
 use Monolog\Logger;
+use Selfoss\daos\CommonSqlDatabase;
+use Selfoss\helpers\DatabaseConnection;
 
 /**
  * Base class for database access -- sqlite
@@ -12,34 +16,37 @@ use Monolog\Logger;
  * @author      Harald Lapp (harald.lapp@gmail.com)
  * @author      Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Database implements \daos\DatabaseInterface {
-    /** @var \DB\SQL database connection */
-    private $connection;
-
-    /** @var Logger */
-    private $logger;
+final class Database implements \Selfoss\daos\DatabaseInterface {
+    use CommonSqlDatabase;
 
     /**
      * establish connection and create undefined tables
      *
      * @return  void
      */
-    public function __construct(\DB\SQL $connection, Logger $logger) {
-        $this->connection = $connection;
-        $this->logger = $logger;
+    public function __construct(
+        private DatabaseConnection $connection,
+        private Logger $logger
+    ) {
+        $this->logger->debug('Establishing SQLite database connection');
 
-        $this->logger->debug('Established database connection');
+        $this->migrate();
+    }
 
+    private function migrate(): void {
         // create tables if necessary
-        $result = @$this->exec('SELECT name FROM sqlite_master WHERE type = "table"');
+        $result = @$this->exec('SELECT "name" FROM "sqlite_master" WHERE "type" = \'table\'');
         $tables = [];
         foreach ($result as $table) {
-            foreach ($table as $key => $value) {
+            foreach ($table as $value) {
                 $tables[] = $value;
             }
         }
 
         if (!in_array('items', $tables, true)) {
+            $this->logger->debug('Creating items table');
+
+            $this->beginTransaction();
             $this->exec('
                 CREATE TABLE items (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,10 +79,13 @@ class Database implements \daos\DatabaseInterface {
                         WHERE id = NEW.id;
                     END;
              ');
+            $this->commit();
         }
 
         $isNewestSourcesTable = false;
         if (!in_array('sources', $tables, true)) {
+            $this->logger->debug('Creating sources table');
+
             $this->exec('
                 CREATE TABLE sources (
                     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -94,6 +104,9 @@ class Database implements \daos\DatabaseInterface {
 
         // version 1
         if (!in_array('version', $tables, true)) {
+            $this->logger->debug('Upgrading database schema to version 8 from initial state');
+
+            $this->beginTransaction();
             $this->exec('
                 CREATE TABLE version (
                     version INT
@@ -116,186 +129,174 @@ class Database implements \daos\DatabaseInterface {
                     ALTER TABLE sources ADD tags TEXT;
                 ');
             }
-        } else {
-            $version = @$this->exec('SELECT version FROM version ORDER BY version DESC LIMIT 0, 1');
-            $version = $version[0]['version'];
-
-            if (strnatcmp($version, '3') < 0) {
-                $this->exec('
-                    ALTER TABLE sources ADD lastupdate INT;
-                ');
-                $this->exec('
-                    INSERT INTO version (version) VALUES (3);
-                ');
-            }
-            if (strnatcmp($version, '4') < 0) {
-                $this->exec('
-                    ALTER TABLE items ADD updatetime DATETIME;
-                ');
-                $this->exec('
-                    CREATE TRIGGER insert_updatetime_trigger
-                    AFTER INSERT ON items FOR EACH ROW
-                        BEGIN
-                            UPDATE items
-                            SET updatetime = CURRENT_TIMESTAMP
-                            WHERE id = NEW.id;
-                        END;
-                ');
-                $this->exec('
-                    CREATE TRIGGER update_updatetime_trigger
-                    AFTER UPDATE ON items FOR EACH ROW
-                        BEGIN
-                            UPDATE items
-                            SET updatetime = CURRENT_TIMESTAMP
-                            WHERE id = NEW.id;
-                        END;
-                ');
-                $this->exec('
-                    INSERT INTO version (version) VALUES (4);
-                ');
-            }
-            if (strnatcmp($version, '5') < 0) {
-                $this->exec('
-                    ALTER TABLE items ADD author VARCHAR(255);
-                ');
-                $this->exec('
-                    INSERT INTO version (version) VALUES (5);
-                ');
-            }
-            if (strnatcmp($version, '6') < 0) {
-                $this->exec('
-                    ALTER TABLE sources ADD filter TEXT;
-                ');
-                $this->exec('
-                    INSERT INTO version (version) VALUES (6);
-                ');
-            }
-            // Jump straight from v6 to v8 due to bug in previous version of the code
-            // in \daos\sqlite\Database which
-            // set the database version to "7" for initial installs.
-            if (strnatcmp($version, '8') < 0) {
-                $this->exec('
-                    ALTER TABLE sources ADD lastentry INT;
-                ');
-                $this->exec('
-                    INSERT INTO version (version) VALUES (8);
-                ');
-
-                $this->initLastEntryFieldDuringUpgrade();
-            }
-            if (strnatcmp($version, '9') < 0) {
-                $this->exec('
-                    ALTER TABLE items ADD shared BOOL;
-                ');
-                $this->exec('
-                    INSERT INTO version (version) VALUES (9);
-                ');
-            }
-            if (strnatcmp($version, '11') < 0) {
-                $this->exec([
-                    // Table needs to be re-created because ALTER TABLE is rather limited.
-                    // https://sqlite.org/lang_altertable.html#otheralter
-                    'CREATE TABLE new_items (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        datetime    DATETIME NOT NULL,
-                        title       TEXT NOT NULL,
-                        content     TEXT NOT NULL,
-                        thumbnail   TEXT,
-                        icon        TEXT,
-                        unread      BOOL NOT NULL,
-                        starred     BOOL NOT NULL,
-                        source      INT NOT NULL,
-                        uid         VARCHAR(255) NOT NULL,
-                        link        TEXT NOT NULL,
-                        updatetime  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                        author      VARCHAR(255),
-                        shared      BOOL,
-                        lastseen    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                    )',
-                    'UPDATE items SET updatetime = datetime WHERE updatetime IS NULL',
-                    'INSERT INTO new_items SELECT *, CURRENT_TIMESTAMP FROM items',
-                    'DROP TABLE items',
-                    'ALTER TABLE new_items RENAME TO items',
-                    'CREATE INDEX source ON items (source)',
-                    'CREATE TRIGGER update_updatetime_trigger
-                        AFTER UPDATE ON items FOR EACH ROW
-                            WHEN (
-                                OLD.unread <> NEW.unread OR
-                                OLD.starred <> NEW.starred
-                            )
-                            BEGIN
-                                UPDATE items
-                                SET updatetime = CURRENT_TIMESTAMP
-                                WHERE id = NEW.id;
-                            END',
-                    'INSERT INTO version (version) VALUES (11)',
-                ]);
-            }
-            if (strnatcmp($version, '13') < 0) {
-                $this->exec([
-                    "UPDATE sources SET spout = 'spouts\\rss\\fulltextrss' WHERE spout = 'spouts\\rss\\instapaper'",
-                    'INSERT INTO version (version) VALUES (13)',
-                ]);
-            }
+            $this->commit();
         }
-    }
 
-    public function exec($cmds, $args = null) {
-        return $this->connection->exec($cmds, $args);
-    }
+        $version = $this->getSchemaVersion();
 
-    /**
-     * wrap insert statement to return id
-     *
-     * @param string $query sql statement
-     * @param array $params sql params
-     *
-     * @return int id after insert
-     */
-    public function insert($query, array $params) {
-        $this->exec($query, $params);
-        $res = $this->exec('SELECT last_insert_rowid() as lastid');
+        if ($version < 3) {
+            $this->logger->debug('Upgrading database schema to version 3');
 
-        return (int) $res[0]['lastid'];
-    }
+            $this->beginTransaction();
+            $this->exec('
+                ALTER TABLE sources ADD lastupdate INT;
+            ');
+            $this->exec('
+                INSERT INTO version (version) VALUES (3);
+            ');
+            $this->commit();
+        }
+        if ($version < 4) {
+            $this->logger->debug('Upgrading database schema to version 4');
 
-    public function quote($value, $type = \PDO::PARAM_STR) {
-        return $this->connection->quote($value, $type);
-    }
+            $this->beginTransaction();
+            $this->exec('
+                ALTER TABLE items ADD updatetime DATETIME;
+            ');
+            $this->exec('
+                CREATE TRIGGER insert_updatetime_trigger
+                AFTER INSERT ON items FOR EACH ROW
+                    BEGIN
+                        UPDATE items
+                        SET updatetime = CURRENT_TIMESTAMP
+                        WHERE id = NEW.id;
+                    END;
+            ');
+            $this->exec('
+                CREATE TRIGGER update_updatetime_trigger
+                AFTER UPDATE ON items FOR EACH ROW
+                    BEGIN
+                        UPDATE items
+                        SET updatetime = CURRENT_TIMESTAMP
+                        WHERE id = NEW.id;
+                    END;
+            ');
+            $this->exec('
+                INSERT INTO version (version) VALUES (4);
+            ');
+            $this->commit();
+        }
+        if ($version < 5) {
+            $this->logger->debug('Upgrading database schema to version 5');
 
-    /**
-     * Begin SQL transaction
-     *
-     * @return bool
-     */
-    public function begin() {
-        return $this->connection->begin();
-    }
+            $this->beginTransaction();
+            $this->exec('
+                ALTER TABLE items ADD author VARCHAR(255);
+            ');
+            $this->exec('
+                INSERT INTO version (version) VALUES (5);
+            ');
+            $this->commit();
+        }
+        if ($version < 6) {
+            $this->logger->debug('Upgrading database schema to version 6');
 
-    /**
-     * Rollback SQL transaction
-     *
-     * @return bool
-     */
-    public function rollback() {
-        return $this->connection->rollback();
-    }
+            $this->beginTransaction();
+            $this->exec('
+                ALTER TABLE sources ADD filter TEXT;
+            ');
+            $this->exec('
+                INSERT INTO version (version) VALUES (6);
+            ');
+            $this->commit();
+        }
+        // Jump straight from v6 to v8 due to bug in previous version of the code
+        // in \Selfoss\daos\sqlite\Database which
+        // set the database version to "7" for initial installs.
+        if ($version < 8) {
+            $this->logger->debug('Upgrading database schema to version 8');
 
-    /**
-     * Commit SQL transaction
-     *
-     * @return bool
-     */
-    public function commit() {
-        return $this->connection->commit();
+            $this->beginTransaction();
+            $this->exec('
+                ALTER TABLE sources ADD lastentry INT;
+            ');
+            $this->exec('
+                INSERT INTO version (version) VALUES (8);
+            ');
+
+            $this->initLastEntryFieldDuringUpgrade();
+            $this->commit();
+        }
+        if ($version < 9) {
+            $this->logger->debug('Upgrading database schema to version 9');
+
+            $this->beginTransaction();
+            $this->exec('
+                ALTER TABLE items ADD shared BOOL;
+            ');
+            $this->exec('
+                INSERT INTO version (version) VALUES (9);
+            ');
+            $this->commit();
+        }
+        if ($version < 11) {
+            $this->logger->debug('Upgrading database schema to version 11');
+
+            $this->beginTransaction();
+            // Table needs to be re-created because ALTER TABLE is rather limited.
+            // https://sqlite.org/lang_altertable.html#otheralter
+            $this->exec(
+                'CREATE TABLE new_items (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    datetime    DATETIME NOT NULL,
+                    title       TEXT NOT NULL,
+                    content     TEXT NOT NULL,
+                    thumbnail   TEXT,
+                    icon        TEXT,
+                    unread      BOOL NOT NULL,
+                    starred     BOOL NOT NULL,
+                    source      INT NOT NULL,
+                    uid         VARCHAR(255) NOT NULL,
+                    link        TEXT NOT NULL,
+                    updatetime  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    author      VARCHAR(255),
+                    shared      BOOL,
+                    lastseen    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )'
+            );
+            $this->exec('UPDATE items SET updatetime = datetime WHERE updatetime IS NULL');
+            $this->exec('INSERT INTO new_items SELECT *, CURRENT_TIMESTAMP FROM items');
+            $this->exec('DROP TABLE items');
+            $this->exec('ALTER TABLE new_items RENAME TO items');
+            $this->exec('CREATE INDEX source ON items (source)');
+            $this->exec('
+                CREATE TRIGGER update_updatetime_trigger
+                    AFTER UPDATE ON items FOR EACH ROW
+                        WHEN (
+                            OLD.unread <> NEW.unread OR
+                            OLD.starred <> NEW.starred
+                        )
+                        BEGIN
+                            UPDATE items
+                            SET updatetime = CURRENT_TIMESTAMP
+                            WHERE id = NEW.id;
+                        END
+            ');
+            $this->exec('INSERT INTO version (version) VALUES (11)');
+            $this->commit();
+        }
+        if ($version < 13) {
+            $this->logger->debug('Upgrading database schema to version 13');
+
+            $this->beginTransaction();
+            $this->exec("UPDATE sources SET spout = 'spouts\\rss\\fulltextrss' WHERE spout = 'spouts\\rss\\instapaper'");
+            $this->exec('INSERT INTO version (version) VALUES (13)');
+            $this->commit();
+        }
+        if ($version < 14) {
+            $this->logger->debug('Upgrading database schema to version 14');
+
+            $this->beginTransaction();
+            $this->exec("UPDATE items SET author = NULL WHERE author = ''");
+            $this->exec('INSERT INTO version (version) VALUES (14)');
+            $this->commit();
+        }
     }
 
     /**
      * optimize database by database own optimize statement
-     *
-     * @return  void
      */
-    public function optimize() {
+    public function optimize(): void {
         @$this->exec('
             VACUUM;
         ');
@@ -303,26 +304,28 @@ class Database implements \daos\DatabaseInterface {
 
     /**
      * Initialize 'lastentry' Field in Source table during database upgrade
-     *
-     * @return void
      */
-    private function initLastEntryFieldDuringUpgrade() {
+    private function initLastEntryFieldDuringUpgrade(): void {
         $sources = @$this->exec('SELECT id FROM sources');
 
         // have a look at each entry in the source table
         foreach ($sources as $current_src) {
             // get the date of the newest entry found in the database
             $latestEntryDate = @$this->exec(
-                'SELECT datetime FROM items WHERE source=? ORDER BY datetime DESC LIMIT 0, 1',
-                $current_src['id']
+                'SELECT datetime FROM items WHERE source=:id ORDER BY datetime DESC LIMIT 0, 1',
+                [
+                    'id' => $current_src['id'],
+                ]
             );
 
             // if an entry for this source was found in the database, write the date of the newest one into the sources table
             if (isset($latestEntryDate[0]['datetime'])) {
                 @$this->exec(
-                    'UPDATE sources SET lastentry=? WHERE id=?',
-                    strtotime($latestEntryDate[0]['datetime']),
-                    $current_src['id']
+                    'UPDATE sources SET lastentry=:entry WHERE id=:id',
+                    [
+                        'entry' => strtotime($latestEntryDate[0]['datetime']),
+                        'id' => $current_src['id'],
+                    ]
                 );
             }
         }

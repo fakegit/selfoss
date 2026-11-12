@@ -1,12 +1,15 @@
 <?php
 
-namespace controllers;
+declare(strict_types=1);
 
-use Base;
+namespace Selfoss\controllers;
+
 use FeedWriter\RSS2;
-use helpers\Authentication;
-use helpers\Configuration;
-use helpers\View;
+use Selfoss\daos;
+use Selfoss\daos\ItemOptions;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\Configuration;
+use Selfoss\helpers\View;
 
 /**
  * Controller for rss access
@@ -15,80 +18,45 @@ use helpers\View;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Rss {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var Configuration configuration */
-    private $configuration;
-
-    /** @var RSS2 feed writer */
-    private $feedWriter;
-
-    /** @var \daos\Items items */
-    private $itemsDao;
-
-    /** @var \daos\Sources sources */
-    private $sourcesDao;
-
-    /** @var View view helper */
-    private $view;
-
-    public function __construct(Authentication $authentication, Configuration $configuration, RSS2 $feedWriter, \daos\Items $itemsDao, \daos\Sources $sourcesDao, View $view) {
-        $this->authentication = $authentication;
-        $this->configuration = $configuration;
-        $this->feedWriter = $feedWriter;
-        $this->itemsDao = $itemsDao;
-        $this->sourcesDao = $sourcesDao;
-        $this->view = $view;
+final readonly class Rss {
+    public function __construct(
+        private Authentication $authentication,
+        private Configuration $configuration,
+        private RSS2 $feedWriter,
+        private daos\Items $itemsDao,
+        private daos\Sources $sourcesDao,
+        private View $view
+    ) {
     }
 
     /**
      * rss feed
-     *
-     * @param Base $f3 fatfree base instance
-     * @param array $params query string parameters
-     *
-     * @return void
      */
-    public function rss(Base $f3, array $params) {
-        $this->authentication->needsLoggedInOrPublicMode();
+    public function rss(): void {
+        $this->authentication->ensureCanRead();
 
         $this->feedWriter->setTitle($this->configuration->rssTitle);
         $this->feedWriter->setChannelElement('description', '');
-        $this->feedWriter->setSelfLink($this->view->base . 'feed');
+        $this->feedWriter->setSelfLink($this->view->getBaseUrl() . 'feed');
 
-        $this->feedWriter->setLink($this->view->base);
+        $this->feedWriter->setLink($this->view->getBaseUrl());
 
         // get sources
         $lastSourceId = 0;
         $lastSourceName = '';
 
-        // set options
-        $options = [];
-        if (count($_GET) > 0) {
-            $options = $_GET;
-        }
-        $options['items'] = $this->configuration->rssMaxItems;
-        if (isset($params['tag'])) {
-            $options['tag'] = $params['tag'];
-        }
-        if (isset($params['type'])) {
-            $options['type'] = $params['type'];
-        }
+        $options = new ItemOptions($_GET);
 
         // get items
         $newestEntryDate = null;
-        $lastid = null;
+        $itemsToMark = [];
         foreach ($this->itemsDao->get($options) as $item) {
-            if ($newestEntryDate === null) {
-                $newestEntryDate = $item['datetime'];
-            }
+            $newestEntryDate ??= $item['datetime'];
             $newItem = $this->feedWriter->createNewItem();
 
             // get Source Name
             if ($item['source'] != $lastSourceId) {
-                foreach ($this->sourcesDao->get() as $source) {
+                foreach ($this->sourcesDao->getAll() as $source) {
                     if ($source['id'] == $item['source']) {
                         $lastSourceId = $source['id'];
                         $lastSourceName = $source['title'];
@@ -112,28 +80,21 @@ class Rss {
             }
 
             $this->feedWriter->addItem($newItem);
-            $lastid = $item['id'];
-
-            // mark as read
-            if ($this->configuration->rssMarkAsRead && $lastid !== null) {
-                $this->itemsDao->mark($lastid);
-            }
+            $itemsToMark[] = $item['id'];
         }
 
-        if ($newestEntryDate === null) {
-            $newestEntryDate = new \DateTime();
+        // mark as read
+        if ($this->configuration->rssMarkAsRead && count($itemsToMark) > 0) {
+            $this->itemsDao->mark($itemsToMark);
         }
+
+        $newestEntryDate ??= new \DateTime();
         $this->feedWriter->setDate($newestEntryDate);
 
         $this->feedWriter->printFeed();
     }
 
-    /**
-     * @param string $title
-     *
-     * @return string
-     */
-    private function sanitizeTitle($title) {
+    private function sanitizeTitle(string $title): string {
         $title = strip_tags($title);
         $title = html_entity_decode($title, ENT_HTML5, 'UTF-8');
 

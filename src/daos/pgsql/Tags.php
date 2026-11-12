@@ -1,6 +1,8 @@
 <?php
 
-namespace daos\pgsql;
+declare(strict_types=1);
+
+namespace Selfoss\daos\pgsql;
 
 /**
  * Class for accessing persistant saved tags -- postgresql
@@ -10,7 +12,7 @@ namespace daos\pgsql;
  * @author      Michael Jackson <michael.o.jackson@gmail.com>
  * @author      Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Tags extends \daos\mysql\Tags {
+final class Tags extends \Selfoss\daos\mysql\Tags {
     /** @var class-string SQL helper */
-    protected static $stmt = Statements::class;
+    protected static string $stmt = Statements::class;
 }

@@ -1,0 +1,23 @@
+{
+    "extends": [
+        "stylelint-config-standard-scss",
+    ],
+    "rules": {
+        "at-rule-empty-line-before": [
+            "always",
+            {
+                "except": [
+                    "after-same-name",
+                    "first-nested"
+                ],
+                "ignore": [
+                    "after-comment"
+                ]
+            }
+        ],
+        "color-hex-length": "long",
+        "no-descending-specificity": null,
+        "no-invalid-position-at-import-rule": null,
+        "property-no-vendor-prefix": true
+    }
+}

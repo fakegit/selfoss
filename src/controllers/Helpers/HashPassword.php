@@ -1,0 +1,39 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Selfoss\controllers\Helpers;
+
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\View;
+
+/**
+ * Controller for user related tasks
+ */
+final readonly class HashPassword {
+    public function __construct(
+        private Authentication $authentication,
+        private View $view
+    ) {
+    }
+
+    /**
+     * password hash generator
+     * json
+     */
+    public function hash(): void {
+        $this->authentication->ensureIsPrivileged();
+
+        if (!isset($_POST['password'])) {
+            $this->view->jsonError([
+                'success' => false,
+                'error' => 'No password given.',
+            ]);
+        }
+
+        $this->view->jsonSuccess([
+            'success' => true,
+            'hash' => password_hash($_POST['password'], PASSWORD_DEFAULT),
+        ]);
+    }
+}

@@ -1,6 +1,10 @@
 <?php
 
-namespace daos\pgsql;
+declare(strict_types=1);
+
+namespace Selfoss\daos\pgsql;
+
+use Selfoss\daos\DatabaseInterface;
 
 /**
  * PostgreSQL specific statements
@@ -9,21 +13,17 @@ namespace daos\pgsql;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Alexandre Rossi <alexandre.rossi@gmail.com>
  */
-class Statements extends \daos\mysql\Statements {
+final class Statements extends \Selfoss\daos\mysql\Statements {
     /**
      * null first for order by clause
      *
      * @param string $column column to concat
-     * @param string $order
+     * @param 'DESC'|'ASC' $order
      *
      * @return string full statement
      */
-    public static function nullFirst($column, $order) {
-        if ($order === 'DESC') {
-            $nulls = 'LAST';
-        } elseif ($order === 'ASC') {
-            $nulls = 'FIRST';
-        }
+    public static function nullFirst(string $column, string $order): string {
+        $nulls = $order === 'DESC' ? 'LAST' : 'FIRST';
 
         return "$column $order NULLS $nulls";
     }
@@ -35,7 +35,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string full statement
      */
-    public static function sumBool($column) {
+    public static function sumBool(string $column): string {
         return "SUM($column::int)";
     }
 
@@ -46,7 +46,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string full statement
      */
-    public static function isTrue($column) {
+    public static function isTrue(string $column): string {
         return "$column=true";
     }
 
@@ -57,7 +57,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string full statement
      */
-    public static function isFalse($column) {
+    public static function isFalse(string $column): string {
         return "$column=false";
     }
 
@@ -69,7 +69,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string full statement
      */
-    public static function csvRowMatches($column, $value) {
+    public static function csvRowMatches(string $column, string $value): string {
         return "$value=ANY(string_to_array($column, ','))";
     }
 
@@ -77,31 +77,34 @@ class Statements extends \daos\mysql\Statements {
      * Ensure row values have the appropriate PHP type. This assumes we are
      * using buffered queries (sql results are in PHP memory).
      *
-     * @param array $rows array of associative array representing row results
-     * @param array $expectedRowTypes associative array mapping columns to PDO types
+     * @param array<array<mixed>> $rows array of associative array representing row results
+     * @param array<string, DatabaseInterface::PARAM_*> $expectedRowTypes associative array mapping columns to PDO types
      *
-     * @return array of associative array representing row results having
+     * @return array<array<mixed>> of associative array representing row results having
      *         expected types
      */
-    public static function ensureRowTypes(array $rows, array $expectedRowTypes) {
+    public static function ensureRowTypes(array $rows, array $expectedRowTypes): array {
         foreach ($rows as $rowIndex => $row) {
             foreach ($expectedRowTypes as $columnIndex => $type) {
                 if (array_key_exists($columnIndex, $row)) {
+                    if ($type & DatabaseInterface::PARAM_NULL) {
+                        $type ^= DatabaseInterface::PARAM_NULL;
+                        if ($row[$columnIndex] === null) {
+                            // Keep as is.
+                            continue;
+                        }
+                    }
                     switch ($type) {
                         // pgsql returns correct PHP types for INT and BOOL
-                        case \daos\PARAM_CSV:
+                        case DatabaseInterface::PARAM_CSV:
                             if ($row[$columnIndex] === '') {
                                 $value = [];
                             } else {
                                 $value = explode(',', $row[$columnIndex]);
                             }
                             break;
-                        case \daos\PARAM_DATETIME:
-                            if (empty($row[$columnIndex])) {
-                                $value = null;
-                            } else {
-                                $value = new \DateTime($row[$columnIndex]);
-                            }
+                        case DatabaseInterface::PARAM_DATETIME:
+                            $value = new \DateTime($row[$columnIndex]);
                             break;
                         default:
                             $value = null;
@@ -124,7 +127,7 @@ class Statements extends \daos\mysql\Statements {
      *
      * @return string expression for matching
      */
-    public static function matchesRegex($value, $regex) {
+    public static function matchesRegex(string $value, string $regex): string {
         // https://www.postgresql.org/docs/12/functions-matching.html#FUNCTIONS-POSIX-REGEXP
         return $value . ' ~ ' . $regex;
     }

@@ -1,11 +1,15 @@
 <?php
 
-namespace controllers\Opml;
+declare(strict_types=1);
 
-use helpers\Authentication;
-use helpers\Configuration;
-use helpers\SpoutLoader;
+namespace Selfoss\controllers\Opml;
+
 use Monolog\Logger;
+use Selfoss\daos;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\Configuration;
+use Selfoss\helpers\SpoutLoader;
+use Selfoss\helpers\StringKeyedArray;
 
 /**
  * OPML loading and exporting controller
@@ -15,36 +19,16 @@ use Monolog\Logger;
  * @author     Michael Moore <stuporglue@gmail.com>
  * @author     Sean Rand <asanernd@gmail.com>
  */
-class Export {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var Configuration configuration */
-    private $configuration;
-
-    /** @var Logger */
-    private $logger;
-
-    /** @var SpoutLoader */
-    private $spoutLoader;
-
-    /** @var \XMLWriter */
-    private $writer;
-
-    /** @var \daos\Sources */
-    private $sourcesDao;
-
-    /** @var \daos\Tags */
-    private $tagsDao;
-
-    public function __construct(Authentication $authentication, Configuration $configuration, Logger $logger, \daos\Sources $sourcesDao, SpoutLoader $spoutLoader, \daos\Tags $tagsDao, \XMLWriter $writer) {
-        $this->authentication = $authentication;
-        $this->configuration = $configuration;
-        $this->logger = $logger;
-        $this->sourcesDao = $sourcesDao;
-        $this->spoutLoader = $spoutLoader;
-        $this->tagsDao = $tagsDao;
-        $this->writer = $writer;
+final readonly class Export {
+    public function __construct(
+        private Authentication $authentication,
+        private Configuration $configuration,
+        private Logger $logger,
+        private daos\Sources $sourcesDao,
+        private SpoutLoader $spoutLoader,
+        private daos\Tags $tagsDao,
+        private \XMLWriter $writer
+    ) {
     }
 
     /**
@@ -52,14 +36,13 @@ class Export {
      *
      * @note Uses the selfoss namespace to store information about spouts
      *
-     * @param array $source source
-     *
-     * @return void
+     * @param array{title: string, spout: string, params: string} $source source
      */
-    private function writeSource(array $source) {
+    private function writeSource(array $source): void {
         // retrieve the feed url of the source
         $params = json_decode(html_entity_decode($source['params']), true);
-        $feedUrl = $this->spoutLoader->get($source['spout'])->getXmlUrl($params);
+        $feed = $this->spoutLoader->get($source['spout']);
+        $feedUrl = $feed?->getXmlUrl($params);
 
         // if the spout doesn't return a feed url, the source isn't an RSS feed
         if ($feedUrl !== null) {
@@ -88,11 +71,9 @@ class Export {
      * Export user's subscriptions to OPML file
      *
      * @note Uses the selfoss namespace to store selfoss-specific information
-     *
-     * @return void
      */
-    public function export() {
-        $this->authentication->needsLoggedIn();
+    public function export(): void {
+        $this->authentication->ensureIsPrivileged();
 
         $this->logger->debug('start OPML export');
         $this->writer->openMemory();
@@ -121,27 +102,29 @@ class Export {
 
         $this->writer->startElement('body');
 
-        // create tree structure for tagged and untagged sources
-        $sources = ['tagged' => [], 'untagged' => []];
-        foreach ($this->sourcesDao->get() as $source) {
+        /** @var StringKeyedArray<array<array{id: int, title: string, tags: string[], spout: string, params: string, filter: ?string, error: ?string, lastupdate: ?int, lastentry: ?int}>> */
+        $taggedSources = new StringKeyedArray();
+        $untaggedSources = [];
+        foreach ($this->sourcesDao->getAll() as $source) {
             if ($source['tags']) {
                 foreach ($source['tags'] as $tag) {
-                    $sources['tagged'][$tag][] = $source;
+                    $taggedSources[$tag] ??= [];
+                    $taggedSources[$tag][] = $source;
                 }
             } else {
-                $sources['untagged'][] = $source;
+                $untaggedSources[] = $source;
             }
         }
 
-        // create associative array with tag names as keys, colors as values
-        $tagColors = [];
-        foreach ($this->tagsDao->get() as $key => $tag) {
+        /** @var StringKeyedArray<string> associate tag names with colors */
+        $tagColors = new StringKeyedArray();
+        foreach ($this->tagsDao->get() as $tag) {
             $this->logger->debug('OPML export: tag ' . $tag['tag'] . ' has color ' . $tag['color']);
             $tagColors[$tag['tag']] = $tag['color'];
         }
 
         // generate outline elements for all sources
-        foreach ($sources['tagged'] as $tag => $children) {
+        foreach ($taggedSources as $tag => $children) {
             $this->logger->debug("OPML export: exporting tag $tag sources");
             $this->writer->startElement('outline');
             $this->writer->writeAttribute('title', $tag);
@@ -157,7 +140,7 @@ class Export {
         }
 
         $this->logger->debug('OPML export: exporting untagged sources');
-        foreach ($sources['untagged'] as $key => $source) {
+        foreach ($untaggedSources as $source) {
             $this->writeSource($source);
         }
 

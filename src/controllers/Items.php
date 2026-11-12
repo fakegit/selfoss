@@ -1,10 +1,16 @@
 <?php
 
-namespace controllers;
+declare(strict_types=1);
 
-use Base;
-use helpers\Authentication;
-use helpers\View;
+namespace Selfoss\controllers;
+
+use DateTimeInterface;
+use InvalidArgumentException;
+use Selfoss\daos\ItemOptions;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\Misc;
+use Selfoss\helpers\Request;
+use Selfoss\helpers\View;
 
 /**
  * Controller for item handling
@@ -13,52 +19,49 @@ use helpers\View;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Items {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var \daos\Items items */
-    private $itemsDao;
-
-    /** @var View view helper */
-    private $view;
-
-    public function __construct(Authentication $authentication, \daos\Items $itemsDao, View $view) {
-        $this->authentication = $authentication;
-        $this->itemsDao = $itemsDao;
-        $this->view = $view;
+final readonly class Items {
+    public function __construct(
+        private Authentication $authentication,
+        private \Selfoss\daos\Items $itemsDao,
+        private Request $request,
+        private View $view
+    ) {
     }
 
     /**
      * mark items as read. Allows one id or an array of ids
      * json
      *
-     * @param Base $f3 fatfree base instance
-     * @param array $params query string parameters
-     *
-     * @return void
+     * @param ?string $itemId ID of item to mark as read
      */
-    public function mark(Base $f3, array $params) {
-        $this->authentication->needsLoggedIn();
+    public function mark(?string $itemId = null): void {
+        $this->authentication->ensureIsPrivileged();
 
-        if (isset($params['item'])) {
-            $lastid = $params['item'];
+        if ($itemId !== null) {
+            $ids = [$itemId];
         } else {
-            $headers = \F3::get('HEADERS');
-            if (isset($headers['Content-Type']) && strpos($headers['Content-Type'], 'application/json') === 0) {
-                $body = \F3::get('BODY');
-                $lastid = json_decode($body, true);
-            } elseif (isset($_POST['ids'])) {
-                $lastid = $_POST['ids'];
+            $ids = $this->request->getData();
+            if (!is_array($ids)) {
+                $this->view->error('The request body needs to contain a list of numbers.');
+            }
+
+            // Legacy format $_POST['ids'].
+            if (isset($ids['ids'])) {
+                $ids = $ids['ids'];
             }
         }
 
         // validate id or ids
-        if (!$this->itemsDao->isValid('id', $lastid)) {
+        try {
+            $ids = Misc::forceIds($ids);
+        } catch (InvalidArgumentException) {
             $this->view->error('invalid id');
         }
 
-        $this->itemsDao->mark($lastid);
+        // The DAO needs a non-empty list: "IN ()" is invalid SQL on MySQL and PostgreSQL.
+        if (count($ids) > 0) {
+            $this->itemsDao->mark($ids);
+        }
 
         $return = [
             'success' => true,
@@ -71,21 +74,18 @@ class Items {
      * mark item as unread
      * json
      *
-     * @param Base $f3 fatfree base instance
-     * @param array $params query string parameters
-     *
-     * @return void
+     * @param string $itemId id of an item to mark as unread
      */
-    public function unmark(Base $f3, array $params) {
-        $this->authentication->needsLoggedIn();
+    public function unmark(string $itemId): void {
+        $this->authentication->ensureIsPrivileged();
 
-        $lastid = $params['item'];
-
-        if (!$this->itemsDao->isValid('id', $lastid)) {
+        try {
+            $itemId = Misc::forceId($itemId);
+        } catch (InvalidArgumentException) {
             $this->view->error('invalid id');
         }
 
-        $this->itemsDao->unmark($lastid);
+        $this->itemsDao->unmark([(int) $itemId]);
 
         $this->view->jsonSuccess([
             'success' => true,
@@ -96,21 +96,18 @@ class Items {
      * starr item
      * json
      *
-     * @param Base $f3 fatfree base instance
-     * @param array $params query string parameters
-     *
-     * @return void
+     * @param string $itemId id of an item to starr
      */
-    public function starr(Base $f3, array $params) {
-        $this->authentication->needsLoggedIn();
+    public function starr(string $itemId): void {
+        $this->authentication->ensureIsPrivileged();
 
-        $id = $params['item'];
-
-        if (!$this->itemsDao->isValid('id', $id)) {
+        try {
+            $itemId = Misc::forceId($itemId);
+        } catch (InvalidArgumentException) {
             $this->view->error('invalid id');
         }
 
-        $this->itemsDao->starr($id);
+        $this->itemsDao->starr($itemId);
         $this->view->jsonSuccess([
             'success' => true,
         ]);
@@ -120,21 +117,18 @@ class Items {
      * unstarr item
      * json
      *
-     * @param Base $f3 fatfree base instance
-     * @param array $params query string parameters
-     *
-     * @return void
+     * @param string $itemId id of an item to unstarr
      */
-    public function unstarr(Base $f3, array $params) {
-        $this->authentication->needsLoggedIn();
+    public function unstarr(string $itemId): void {
+        $this->authentication->ensureIsPrivileged();
 
-        $id = $params['item'];
-
-        if (!$this->itemsDao->isValid('id', $id)) {
+        try {
+            $itemId = Misc::forceId($itemId);
+        } catch (InvalidArgumentException) {
             $this->view->error('invalid id');
         }
 
-        $this->itemsDao->unstarr($id);
+        $this->itemsDao->unstarr($itemId);
         $this->view->jsonSuccess([
             'success' => true,
         ]);
@@ -143,28 +137,21 @@ class Items {
     /**
      * returns items as json string
      * json
-     *
-     * @return void
      */
-    public function listItems() {
-        $this->authentication->needsLoggedInOrPublicMode();
+    public function listItems(): never {
+        $this->authentication->ensureCanRead();
 
         // parse params
-        $options = [];
-        if (count($_GET) > 0) {
-            $options = $_GET;
-        }
+        $options = new ItemOptions($_GET);
 
         // get items
         $items = $this->itemsDao->get($options);
 
-        $items = array_map(function($item) {
+        $items = array_map(function(array $item): array {
             $stringifiedDates = [
-                'datetime' => $item['datetime']->format(\DateTime::ATOM),
+                'datetime' => $item['datetime']->format(DateTimeInterface::ATOM),
+                'updatetime' => $item['updatetime']->format(DateTimeInterface::ATOM),
             ];
-            if (!empty($item['updatetime'])) {
-                $stringifiedDates['updatetime'] = $item['updatetime']->format(\DateTime::ATOM);
-            }
 
             return array_merge($item, $stringifiedDates);
         }, $items);

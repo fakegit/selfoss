@@ -1,9 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\facebook;
 
 use GuzzleHttp\Psr7\Uri;
-use helpers\WebClient;
+use Selfoss\helpers\HtmlString;
+use Selfoss\helpers\WebClient;
+use spouts\Item;
+use spouts\Parameter;
 
 /**
  * Spout for fetching a facebook page feed
@@ -14,55 +19,62 @@ use helpers\WebClient;
  * @license GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author Tobias Zeising <tobias.zeising@aditu.de>
  * @author Jan Tojnar <jtojnar@gmail.com>
+ *
+ * @phpstan-type FbAttachment array{type: string, target: array{url: string}, media: array{image: array{src: string}}, description: string}
+ * @phpstan-type FbItem array{id: string, message: string, permalink_url: string, created_time: string, attachments?: array{data: array<FbAttachment>}}
+ * @phpstan-type FbParams array{user: string, app_id: string, app_secret: string}
+ *
+ * @extends \spouts\spout<null>
  */
 class page extends \spouts\spout {
-    use \helpers\ItemsIterator;
+    public string $name = 'Facebook: page feed';
 
-    /** @var string name of source */
-    public $name = 'Facebook: page feed';
+    public string $description = 'Get posts from given Facebook page wall.';
 
-    /** @var string description of this source type */
-    public $description = 'Get posts from given Facebook page wall.';
-
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'user' => [
             'title' => 'Page name',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'app_id' => [
             'title' => 'App ID',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'app_secret' => [
             'title' => 'App Secret',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
     ];
 
-    /** @var ?string page picture */
-    private $pageLink;
+    /** Title of the source */
+    protected ?string $title = null;
 
-    /** @var ?string page picture */
-    private $pagePicture;
+    private ?string $pageLink = null;
 
-    /** @var WebClient */
-    private $webClient;
+    private ?string $pagePicture = null;
 
-    public function __construct(WebClient $webClient) {
-        $this->webClient = $webClient;
+    /** @var FbItem[] current fetched items */
+    private array $items = [];
+
+    public function __construct(
+        private readonly WebClient $webClient
+    ) {
     }
 
-    public function load(array $params) {
+    /**
+     * @param FbParams $params
+     */
+    public function load(array $params): void {
+        // https://developers.facebook.com/docs/graph-api/reference/user
         $http = $this->webClient->getHttpClient();
         $url = new Uri('https://graph.facebook.com/' . urlencode($params['user']));
         $url = $url->withQueryValues($url, [
@@ -71,88 +83,78 @@ class page extends \spouts\spout {
         ]);
         $data = json_decode((string) $http->get($url)->getBody(), true);
 
-        $this->spoutTitle = $data['name'];
+        $this->title = $data['name'];
         $this->pagePicture = $data['picture']['data']['url'];
         $this->pageLink = $data['picture']['link'];
+        // https://developers.facebook.com/docs/graph-api/reference/user/feed/
         $this->items = $data['feed']['data'];
     }
 
-    public function getHtmlUrl() {
+    public function getTitle(): ?string {
+        return $this->title;
+    }
+
+    public function getHtmlUrl(): ?string {
         return $this->pageLink;
     }
 
-    public function getId() {
-        if ($this->items !== null) {
-            $item = current($this->items);
-
-            return $item['id'];
-        }
-
-        return false;
-    }
-
-    public function getTitle() {
-        if ($this->items !== null) {
-            $item = current($this->items);
-
-            if (mb_strlen($item['message']) > 80) {
-                return mb_substr($item['message'], 0, 100) . '…';
-            } else {
-                return $item['message'];
-            }
-        }
-
-        return false;
-    }
-
-    public function getContent() {
-        if ($this->items !== null) {
-            $item = current($this->items);
-            $message = $item['message'];
-
-            if (isset($item['attachments']) && count($item['attachments']['data']) > 0) {
-                foreach ($item['attachments']['data'] as $media) {
-                    if ($media['type'] === 'photo') {
-                        $message .= '<figure>' . PHP_EOL;
-                        $message .= '<a href="' . $media['target']['url'] . '"><img src="' . $media['media']['image']['src'] . '" alt=""></a>' . PHP_EOL;
-
-                        // Some photos will have the same description, no need to display it twice
-                        if ($media['description'] !== $item['message']) {
-                            $message .= '<figcaption>' . $media['description'] . '</figcaption>' . PHP_EOL;
-                        }
-
-                        $message .= '</figure>' . PHP_EOL;
-                    }
-                }
-            }
-
-            return $message;
-        }
-
-        return false;
-    }
-
-    public function getIcon() {
+    public function getIcon(): ?string {
         return $this->pagePicture;
     }
 
-    public function getLink() {
-        if ($this->items !== null) {
-            $item = current($this->items);
+    /**
+     * @return \Generator<Item<null>> list of items
+     */
+    public function getItems(): iterable {
+        foreach ($this->items as $item) {
+            $id = $item['id'];
+            $title = HtmlString::fromPlainText(mb_strlen($item['message']) > 80 ? mb_substr($item['message'], 0, 100) . '…' : $item['message']);
+            $content = $this->getPostContent($item);
+            $thumbnail = null;
+            $icon = null;
+            $link = $item['permalink_url'];
+            // The docs say UNIX timestamp but appears to be ISO 8601.
+            // https://developers.facebook.com/docs/graph-api/reference/post/
+            // https://stackoverflow.com/questions/14516792/what-is-the-time-format-used-in-facebook-created-date
+            $date = new \DateTimeImmutable($item['created_time']);
+            $author = null;
 
-            return $item['permalink_url'];
+            yield new Item(
+                id: $id,
+                title: $title,
+                content: $content,
+                thumbnail: $thumbnail,
+                icon: $icon,
+                link: $link,
+                date: $date,
+                author: $author,
+                extraData: null,
+            );
         }
-
-        return false;
     }
 
-    public function getDate() {
-        if ($this->items !== null) {
-            $item = current($this->items);
+    /**
+     * @param FbItem $item
+     */
+    private function getPostContent(array $item): HtmlString {
+        $message = htmlspecialchars($item['message']);
 
-            return $item['created_time'];
+        if (isset($item['attachments']) && count($item['attachments']['data']) > 0) {
+            foreach ($item['attachments']['data'] as $media) {
+                if ($media['type'] === 'photo') {
+                    $message .= '<figure>' . PHP_EOL;
+                    $message .= '<a href="' . htmlspecialchars($media['target']['url'], ENT_QUOTES) . '"><img src="' . htmlspecialchars($media['media']['image']['src'], ENT_QUOTES) . '" alt=""></a>' . PHP_EOL;
+
+                    // Some photos will have the same description, no need to display it twice
+                    if ($media['description'] !== $item['message']) {
+                        $message .= '<figcaption>' . htmlspecialchars($media['description']) . '</figcaption>' . PHP_EOL;
+                    }
+
+                    $message .= '</figure>' . PHP_EOL;
+                }
+            }
         }
 
-        return false;
+        return HtmlString::fromRaw($message);
     }
 }

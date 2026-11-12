@@ -1,6 +1,8 @@
 <?php
 
-namespace daos;
+declare(strict_types=1);
+
+namespace Selfoss\daos;
 
 /**
  * Interface describing concrete DAO for working with tags.
@@ -8,61 +10,44 @@ namespace daos;
 interface TagsInterface {
     /**
      * save given tag color
-     *
-     * @param string $tag
-     * @param string $color
-     *
-     * @return void
      */
-    public function saveTagColor($tag, $color);
+    public function saveTagColor(string $tag, string $color): void;
 
     /**
      * save given tag with random color
-     *
-     * @param string $tag
-     *
-     * @return void
      */
-    public function autocolorTag($tag);
+    public function autocolorTag(string $tag): void;
 
     /**
      * returns all tags with color
      *
-     * @return array of all tags
+     * @return array<array{tag: string, color: string}>
      */
-    public function get();
+    public function get(): array;
 
     /**
      * returns all tags with color and unread count
      *
-     * @return array of all tags
+     * @return array<array{tag: string, color: string, unread: int}>
      */
-    public function getWithUnread();
+    public function getWithUnread(): array;
 
     /**
      * remove all unused tag color definitions
      *
-     * @param array $tags available tags
-     *
-     * @return void
+     * @param string[] $tags available tags
      */
-    public function cleanup(array $tags);
+    public function cleanup(array $tags): void;
 
     /**
      * check whether tag color is defined.
      *
-     * @param string $tag
-     *
      * @return bool true if color is used by an tag
      */
-    public function hasTag($tag);
+    public function hasTag(string $tag): bool;
 
     /**
      * delete tag
-     *
-     * @param string $tag
-     *
-     * @return void
      */
-    public function delete($tag);
+    public function delete(string $tag): void;
 }

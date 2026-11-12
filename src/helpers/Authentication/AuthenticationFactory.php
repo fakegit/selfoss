@@ -1,0 +1,47 @@
+<?php
+
+// SPDX-FileCopyrightText: 2024 Jan Tojnar <jtojnar@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+declare(strict_types=1);
+
+namespace Selfoss\helpers\Authentication;
+
+use Psr\Container\ContainerInterface;
+use Selfoss\helpers\Configuration;
+
+/**
+ * Factory that creates `AuthenticationService` based on the configuration.
+ */
+final readonly class AuthenticationFactory {
+    public function __construct(
+        private Configuration $configuration,
+        private ContainerInterface $container
+    ) {
+    }
+
+    public function create(): AuthenticationService {
+        if (!$this->useCredentials() || self::isCli() || self::isLocalIp()) {
+            return $this->container->get(Services\Trust::class);
+        }
+
+        return $this->container->get(Services\RequestOrSession::class);
+    }
+
+    private static function isCli(): bool {
+        return PHP_SAPI === 'cli';
+    }
+
+    private static function isLocalIp(): bool {
+        // We cannot trust these IP addresses but we know they are likely not local.
+        if (isset($_SERVER['HTTP_X_FORWARDED_FOR']) || isset($_SERVER['HTTP_FORWARDED'])) {
+            return false;
+        }
+
+        return $_SERVER['REMOTE_ADDR'] === '::1' || $_SERVER['REMOTE_ADDR'] === '127.0.0.1';
+    }
+
+    private function useCredentials(): bool {
+        return strlen($this->configuration->username) > 0 && strlen($this->configuration->password) > 0;
+    }
+}

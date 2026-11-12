@@ -1,62 +1,39 @@
 <?php
 
-namespace controllers\Items;
+declare(strict_types=1);
 
-use helpers\Authentication;
-use helpers\Configuration;
-use function helpers\json_response;
-use helpers\View;
-use helpers\ViewHelper;
+namespace Selfoss\controllers\Items;
+
+use Selfoss\daos;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\Configuration;
+use function Selfoss\helpers\json_response;
+use Selfoss\helpers\View;
+use Selfoss\helpers\ViewHelper;
 
 /**
  * Controller for synchronizing item statuses
  */
-class Sync {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var Configuration configuration */
-    private $configuration;
-
-    /** @var \daos\Items items */
-    private $itemsDao;
-
-    /** @var \daos\Sources sources */
-    private $sourcesDao;
-
-    /** @var \controllers\Tags tags controller */
-    private $tagsController;
-
-    /** @var \daos\Tags tags */
-    private $tagsDao;
-
-    /** @var View view helper */
-    private $view;
-
-    /** @var ViewHelper */
-    private $viewHelper;
-
-    public function __construct(Authentication $authentication, Configuration $configuration, \daos\Items $itemsDao, \daos\Sources $sourcesDao, \controllers\Tags $tagsController, \daos\Tags $tagsDao, View $view, ViewHelper $viewHelper) {
-        $this->authentication = $authentication;
-        $this->configuration = $configuration;
-        $this->itemsDao = $itemsDao;
-        $this->sourcesDao = $sourcesDao;
-        $this->tagsController = $tagsController;
-        $this->tagsDao = $tagsDao;
-        $this->view = $view;
-        $this->viewHelper = $viewHelper;
+final readonly class Sync {
+    public function __construct(
+        private Authentication $authentication,
+        private Configuration $configuration,
+        private daos\Items $itemsDao,
+        private daos\Sources $sourcesDao,
+        private \Selfoss\controllers\Tags $tagsController,
+        private daos\Tags $tagsDao,
+        private View $view,
+        private ViewHelper $viewHelper
+    ) {
     }
 
     /**
      * returns updated database info (stats, item statuses)
      * json
-     *
-     * @return void
      */
-    public function sync() {
-        $this->authentication->needsLoggedInOrPublicMode();
+    public function sync(): void {
+        $this->authentication->ensureCanRead();
 
-        $params = null;
         if (isset($_GET['since'])) {
             $params = $_GET;
         } elseif (isset($_POST['since'])) {
@@ -68,18 +45,17 @@ class Sync {
         $since = new \DateTime($params['since']);
         $since->setTimeZone(new \DateTimeZone(date_default_timezone_get()));
 
-        $last_update = new \DateTime($this->itemsDao->lastUpdate());
+        $lastUpdate = $this->itemsDao->lastUpdate();
 
         $sync = [
-            'lastUpdate' => $last_update->format(\DateTime::ATOM),
+            'lastUpdate' => $lastUpdate?->format(\DateTime::ATOM),
         ];
 
-        $sinceId = 0;
         if (array_key_exists('itemsSinceId', $params)) {
             $sinceId = (int) $params['itemsSinceId'];
             if ($sinceId >= 0) {
                 $notBefore = isset($params['itemsNotBefore']) ? new \DateTime($params['itemsNotBefore']) : null;
-                if ($sinceId === 0 || !$notBefore) {
+                if ($sinceId === 0 || $notBefore === null) {
                     $sinceId = $this->itemsDao->lowestIdOfInterest() - 1;
                     // only send 1 day worth of items
                     $notBefore = new \DateTime();
@@ -91,13 +67,14 @@ class Sync {
                 $itemsHowMany = $this->configuration->itemsPerpage;
                 if (array_key_exists('itemsHowMany', $params)
                     && is_int($params['itemsHowMany'])) {
-                    $itemsHowMany = min($params['itemsHowMany'],
-                                        2 * $itemsHowMany);
+                    $itemsHowMany = min(
+                        $params['itemsHowMany'],
+                        2 * $itemsHowMany
+                    );
                 }
 
                 $sync['newItems'] = function() use ($sinceId, $notBefore, $since, $itemsHowMany) {
-                    foreach ($this->itemsDao->sync($sinceId, $notBefore, $since, $itemsHowMany)
-                             as $newItem) {
+                    foreach ($this->itemsDao->sync($sinceId, $notBefore, $since, $itemsHowMany) as $newItem) {
                         yield $this->viewHelper->preprocessEntry($newItem, $this->tagsController);
                     }
                 };
@@ -106,7 +83,7 @@ class Sync {
             }
         }
 
-        if ($last_update > $since) {
+        if ($lastUpdate === null || $lastUpdate > $since) {
             $sync['stats'] = $this->itemsDao->stats();
 
             if (array_key_exists('tags', $params) && $params['tags'] == 'true') {
@@ -127,15 +104,33 @@ class Sync {
 
     /**
      * Items statuses bulk update.
-     *
-     * @return void
      */
-    public function updateStatuses() {
-        $this->authentication->needsLoggedIn();
+    public function updateStatuses(): void {
+        $this->authentication->ensureIsPrivileged();
 
-        if (isset($_POST['updatedStatuses'])
-            && is_array($_POST['updatedStatuses'])) {
-            $this->itemsDao->bulkStatusUpdate($_POST['updatedStatuses']);
+        if (isset($_POST['updatedStatuses'])) {
+            $updatedStatuses = $_POST['updatedStatuses'];
+            if (!is_array($updatedStatuses)) {
+                $this->view->jsonError(['updatedStatuses' => 'not an array']);
+            }
+
+            foreach ($updatedStatuses as $index => &$status) {
+                if (!is_array($status)) {
+                    $this->view->jsonError(["updatedStatuses[$index]" => 'not an array']);
+                }
+
+                if (!array_key_exists('id', $status)) {
+                    $this->view->jsonError(["updatedStatuses[$index]" => 'missing id argument']);
+                }
+
+                $id = (int) $status['id'];
+                if ((string) $id !== $status['id']) {
+                    $this->view->jsonError(["updatedStatuses[$index]['id']" => 'not a number']);
+                }
+                $status['id'] = $id;
+            }
+
+            $this->itemsDao->bulkStatusUpdate($updatedStatuses);
         }
 
         $this->sync();

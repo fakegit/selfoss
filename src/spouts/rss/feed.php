@@ -1,10 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\rss;
 
-use helpers\FeedReader;
-use helpers\Image;
 use Monolog\Logger;
+use Selfoss\helpers\FeedReader;
+use Selfoss\helpers\HtmlString;
+use Selfoss\helpers\Image;
+use SimplePie;
+use spouts\Item;
+use spouts\Parameter;
 
 /**
  * Spout for fetching an rss feed
@@ -12,102 +18,119 @@ use Monolog\Logger;
  * @copyright  Copyright (c) Tobias Zeising (http://www.aditu.de)
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
+ *
+ * @extends \spouts\spout<SimplePie\Item>
  */
 class feed extends \spouts\spout {
-    use \helpers\ItemsIterator;
+    public string $name = 'RSS Feed';
 
-    /** @var string name of source */
-    public $name = 'RSS Feed';
+    public string $description = 'Get posts from plain RSS/Atom feed.';
 
-    /** @var string description of this source type */
-    public $description = 'Get posts from plain RSS/Atom feed.';
-
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'url' => [
             'title' => 'URL',
-            'type' => 'url',
+            'type' => Parameter::TYPE_URL,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
     ];
 
-    /** @var ?string URL of the source */
-    protected $htmlUrl = null;
+    /** URL of the source */
+    protected ?string $htmlUrl = null;
 
-    /** @var Logger */
-    private $logger;
+    /** Title of the source */
+    protected ?string $title = null;
 
-    /** @var FeedReader */
-    private $feed;
+    /** @var SimplePie\Item[] current fetched items */
+    private array $items = [];
 
-    /** @var Image image helper */
-    private $imageHelper;
-
-    public function __construct(FeedReader $feed, Image $imageHelper, Logger $logger) {
-        $this->imageHelper = $imageHelper;
-        $this->logger = $logger;
-        $this->feed = $feed;
+    public function __construct(
+        private readonly FeedReader $feed,
+        private readonly Image $imageHelper,
+        private readonly Logger $logger
+    ) {
     }
 
     //
     // Source Methods
     //
 
-    public function load(array $params) {
+    public function load(array $params): void {
         $feedData = $this->feed->load(htmlspecialchars_decode($params['url']));
         $this->items = $feedData['items'];
         $this->htmlUrl = $feedData['htmlUrl'];
-        $this->spoutTitle = $feedData['spoutTitle'];
+        $this->title = $feedData['title'];
     }
 
-    public function getXmlUrl(array $params) {
+    public function getTitle(): ?string {
+        return $this->title;
+    }
+
+    public function getXmlUrl(array $params): ?string {
         return isset($params['url']) ? html_entity_decode($params['url']) : null;
     }
 
-    public function getHtmlUrl() {
+    public function getHtmlUrl(): ?string {
         return $this->htmlUrl;
     }
 
-    public function getId() {
-        if ($this->items !== null && $this->valid()) {
-            $id = @current($this->items)->get_id();
+    /**
+     * @return \Generator<Item<SimplePie\Item>> list of items
+     */
+    public function getItems(): iterable {
+        foreach ($this->items as $item) {
+            $id = (string) $item->get_id();
             if (strlen($id) > 255) {
                 $id = md5($id);
             }
+            $title = (string) $item->get_title();
+            // Atom feeds can contain HTML in titles, strip tags and convert to text.
+            $title = HtmlString::fromPlainText(htmlspecialchars_decode(strip_tags($title)));
+            $content = HtmlString::fromRaw((string) $item->get_content());
+            $thumbnail = null;
+            $icon = null;
+            $link = htmlspecialchars_decode((string) $item->get_link(), ENT_COMPAT); // SimplePie sanitizes URLs
+            $unixDate = $item->get_date('U');
+            $date = $unixDate !== null ? new \DateTimeImmutable('@' . $unixDate) : new \DateTimeImmutable();
+            $author = $this->getAuthorString($item);
 
-            return $id;
+            yield new Item(
+                id: $id,
+                title: $title,
+                content: $content,
+                thumbnail: $thumbnail,
+                icon: $icon,
+                link: $link,
+                date: $date,
+                author: $author,
+                extraData: $item,
+            );
+        }
+    }
+
+    private function getAuthorString(SimplePie\Item $item): ?string {
+        $author = $item->get_author();
+        if (isset($author)) {
+            // Both are sanitized using SimplePie::CONSTRUCT_TEXT
+            // so they are plain text strings with escaped HTML special characters.
+            $name = $author->get_name();
+            $email = $author->get_email();
+            if ($name !== null) {
+                return htmlspecialchars_decode($name);
+            } elseif ($email !== null) {
+                return htmlspecialchars_decode($author->get_email() ?? '');
+            }
         }
 
         return null;
     }
 
-    public function getTitle() {
-        if ($this->items !== null && $this->valid()) {
-            return htmlspecialchars_decode(@current($this->items)->get_title());
-        }
-
-        return null;
-    }
-
-    public function getContent() {
-        if ($this->items !== null && $this->valid()) {
-            return @current($this->items)->get_content();
-        }
-
-        return null;
-    }
-
-    public function getIcon() {
-        return null;
-    }
-
-    public function getSourceIcon() {
+    public function getIcon(): ?string {
         // Try to use feed logo first
         $feedLogoUrl = $this->feed->getImageUrl();
         if ($feedLogoUrl && ($iconData = $this->imageHelper->fetchFavicon($feedLogoUrl)) !== null) {
-            list($faviconUrl, $iconBlob) = $iconData;
+            [$faviconUrl, $iconBlob] = $iconData;
 
             $aspectRatio = $iconBlob->getWidth() / $iconBlob->getHeight();
 
@@ -115,15 +138,15 @@ class feed extends \spouts\spout {
                 $this->logger->debug('icon: using feed logo: ' . $faviconUrl);
 
                 return $faviconUrl;
-            } else {
-                $this->logger->debug('icon: feed logo “' . $faviconUrl . '” not square enough with aspect ratio ' . $aspectRatio . '. Not using it.');
             }
+
+            $this->logger->debug('icon: feed logo “' . $faviconUrl . '” not square enough with aspect ratio ' . $aspectRatio . '. Not using it.');
         }
 
         // else fallback to the favicon of the associated web page
         $htmlUrl = $this->getHtmlUrl();
         if ($htmlUrl && ($iconData = $this->imageHelper->fetchFavicon($htmlUrl, true)) !== null) {
-            list($faviconUrl, $iconBlob) = $iconData;
+            [$faviconUrl] = $iconData;
             $this->logger->debug('icon: using feed homepage favicon: ' . $faviconUrl);
 
             return $faviconUrl;
@@ -132,7 +155,7 @@ class feed extends \spouts\spout {
         // else fallback to the favicon of the feed effective domain
         $feedUrl = $this->feed->getFeedUrl();
         if ($feedUrl && ($iconData = $this->imageHelper->fetchFavicon($feedUrl, true)) !== null) {
-            list($faviconUrl, $iconBlob) = $iconData;
+            [$faviconUrl] = $iconData;
             $this->logger->debug('icon: using feed homepage favicon: ' . $faviconUrl);
 
             return $faviconUrl;
@@ -141,46 +164,9 @@ class feed extends \spouts\spout {
         return null;
     }
 
-    public function getLink() {
-        if ($this->items !== null && $this->valid()) {
-            $link = @current($this->items)->get_link();
-
-            return htmlspecialchars_decode($link, ENT_COMPAT); // SimplePie sanitizes URLs
-        }
-
-        return null;
-    }
-
-    public function getDate() {
-        if ($this->items !== null && $this->valid()) {
-            $date = @current($this->items)->get_date('Y-m-d H:i:s');
-        }
-        if (strlen($date) === 0) {
-            $date = date('Y-m-d H:i:s');
-        }
-
-        return $date;
-    }
-
-    public function getAuthor() {
-        if ($this->items !== null && $this->valid()) {
-            $author = @current($this->items)->get_author();
-            if (isset($author)) {
-                $name = $author->get_name();
-                if (isset($name)) {
-                    return htmlspecialchars_decode($name);
-                } else {
-                    return htmlspecialchars_decode($author->get_email());
-                }
-            }
-        }
-
-        return null;
-    }
-
-    public function destroy() {
+    public function destroy(): void {
         $this->feed->__destruct();
         unset($this->items);
-        $this->items = null;
+        $this->items = [];
     }
 }

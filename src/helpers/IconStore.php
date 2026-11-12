@@ -1,34 +1,26 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
 
-use helpers\Storage\FileStorage;
+namespace Selfoss\helpers;
+
 use Monolog\Logger;
+use Selfoss\helpers\Storage\FileStorage;
 
 /**
  * Icon storage.
  */
-class IconStore {
-    /** @var Logger */
-    private $logger;
-
-    /** @var FileStorage */
-    private $storage;
-
-    public function __construct(FileStorage $storage, Logger $logger) {
-        $this->storage = $storage;
-        $this->logger = $logger;
+final readonly class IconStore {
+    public function __construct(
+        private FileStorage $storage,
+        private Logger $logger
+    ) {
     }
 
     /**
      * Store given blob as URL.
-     *
-     * @param string $url
-     * @param string $blob
-     *
-     * @return ?string
      */
-    public function store($url, $blob) {
+    public function store(string $url, string $blob): ?string {
         $extension = Image::getExtension(ContentLoader::ICON_FORMAT);
         $this->logger->debug('Storing icon: ' . $url);
 
@@ -39,10 +31,8 @@ class IconStore {
      * Delete all icons except for requested ones.
      *
      * @param callable(string):bool $shouldKeep
-     *
-     * @return void
      */
-    public function cleanup($shouldKeep) {
+    public function cleanup(callable $shouldKeep): void {
         $this->storage->cleanup($shouldKeep);
     }
 }

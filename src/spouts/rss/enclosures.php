@@ -1,6 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\rss;
+
+use Selfoss\helpers\HtmlString;
+use SimplePie;
+use SimplePie\Enclosure;
+use spouts\Item;
 
 /**
  * Plugin for fetching RSS feeds with image enclosures
@@ -10,25 +17,88 @@ namespace spouts\rss;
  * @author     Daniel Rudolf <https://daniel-rudolf.de/>
  */
 class enclosures extends feed {
-    /** @var string name of spout */
-    public $name = 'RSS Feed (with enclosures)';
+    public string $name = 'RSS Feed (with enclosures)';
 
-    /** @var string description of this source type */
-    public $description = 'Get posts from RSS feed, including media enclosures.';
+    public string $description = 'Get posts from RSS feed, including media enclosures.';
 
-    public function getContent() {
-        if ($this->items !== null && $this->valid()) {
-            $content = parent::getContent();
-            foreach (@current($this->items)->get_enclosures() as $enclosure) {
-                if ($enclosure->get_medium() === 'image') {
-                    $title = htmlspecialchars(strip_tags($enclosure->get_title()));
-                    $content .= '<img src="' . $enclosure->get_link() . '" alt="' . $title . '" title="' . $title . '" />';
-                }
-            }
+    /**
+     * @return \Generator<Item<SimplePie\Item>> list of items
+     */
+    public function getItems(): iterable {
+        foreach (parent::getItems() as $item) {
+            $newContent = $this->getContentWithEnclosures($item->getContent(), $item->getExtraData());
+            yield $item->withContent($newContent);
+        }
+    }
 
+    private function getContentWithEnclosures(HtmlString $content, SimplePie\Item $item): HtmlString {
+        $enclosures = $item->get_enclosures();
+        if ($enclosures === null) {
             return $content;
         }
 
-        return parent::getContent();
+        $newContent = $content->getRaw();
+
+        foreach ($enclosures as $enclosure) {
+            $newContent .= match (self::mediaKind($enclosure)) {
+                'image' => self::formatImage($enclosure),
+                'audio' => self::formatAudio($enclosure),
+                default => '',
+            };
+        }
+
+        return HtmlString::fromRaw($newContent);
+    }
+
+    private static function mediaKind(Enclosure $enclosure): ?string {
+        $medium = $enclosure->get_medium();
+
+        if ($medium !== null) {
+            return $medium;
+        }
+
+        $type = $enclosure->get_type();
+
+        if ($type !== null) {
+            [$medium] = explode('/', $type, 2);
+
+            return $medium;
+        }
+
+        return null;
+    }
+
+    private static function formatImage(Enclosure $enclosure): string {
+        $url = $enclosure->get_link();
+
+        if ($url === null) {
+            return '';
+        }
+
+        $title = htmlspecialchars(strip_tags((string) $enclosure->get_title()), ENT_QUOTES);
+        $url = htmlspecialchars_decode($url, ENT_COMPAT); // SimplePie sanitizes URLs
+
+        return '<img src="' . htmlspecialchars($url, ENT_QUOTES) . '" alt="' . $title . '" title="' . $title . '" />';
+    }
+
+    private static function formatAudio(Enclosure $enclosure): string {
+        $url = $enclosure->get_link();
+
+        if ($url === null) {
+            return '';
+        }
+
+        $url = htmlspecialchars_decode($url, ENT_COMPAT); // SimplePie sanitizes URLs
+
+        $linkLabel = 'Download';
+
+        $duration = $enclosure->get_duration(true);
+        if ($duration !== null) {
+            $linkLabel .= ' (' . $duration . ')';
+        }
+
+        $link = '<a href="' . htmlspecialchars($url, ENT_QUOTES) . '">' . $linkLabel . '</a>';
+
+        return "\n" . $link;
     }
 }

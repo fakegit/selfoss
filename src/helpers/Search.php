@@ -1,6 +1,8 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
+
+namespace Selfoss\helpers;
 
 /**
  * Helper class for searching
@@ -9,20 +11,24 @@ namespace helpers;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tim Gerundt <tim@gerundt.de>
  */
-class Search {
+final class Search {
     /**
      * return search terms as array
      *
-     * @param string $search
-     *
-     * @return array search terms
+     * @return string[] search terms
      */
-    public static function splitTerms($search) {
+    public static function splitTerms(string $search): array {
         if (strlen($search) === 0) {
             return [];
         }
 
-        //split search terms by space (but save it inside quotes)...
-        return str_getcsv(trim($search), ' ');
+        // Split search terms by space (but save it inside quotes)...
+        /** @var string[] */ // For PHPStan: The only case where null appears is array{null} when the $string is empty.
+        $parts = str_getcsv(trim($search), ' ', '"', '\\');
+
+        return array_filter(
+            $parts,
+            fn(string $item): bool => $item !== ''
+        );
     }
 }

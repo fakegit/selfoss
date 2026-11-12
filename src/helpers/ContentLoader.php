@@ -1,8 +1,14 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
+
+namespace Selfoss\helpers;
 
 use Monolog\Logger;
+use Selfoss\daos;
+use Selfoss\helpers\Filters\AcceptingFilter;
+use Selfoss\helpers\Filters\FilterFactory;
+use Selfoss\helpers\Filters\FilterSyntaxError;
 
 /**
  * Helper class for loading extern items
@@ -11,66 +17,38 @@ use Monolog\Logger;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class ContentLoader {
-    /** @var Configuration configuration */
-    private $configuration;
+final readonly class ContentLoader {
+    public const ICON_FORMAT = Image::FORMAT_PNG;
+    public const THUMBNAIL_FORMAT = Image::FORMAT_JPEG;
 
-    /** @var \daos\Database database for optimization */
-    private $database;
-
-    /** @var IconStore icon store */
-    private $iconStore;
-
-    /** @var Image image helper */
-    private $imageHelper;
-
-    /** @var \daos\Items database access for saving new item */
-    private $itemsDao;
-
-    /** @var Logger */
-    private $logger;
-
-    /** @var \daos\Sources database access for saving source’s last update */
-    private $sourcesDao;
-
-    /** @var SpoutLoader spout loader */
-    private $spoutLoader;
-
-    /** @var ThumbnailStore thumbnail store */
-    private $thumbnailStore;
-
-    /** @var WebClient thumbnail store */
-    private $webClient;
-
-    const ICON_FORMAT = Image::FORMAT_PNG;
-    const THUMBNAIL_FORMAT = Image::FORMAT_JPEG;
-
-    /**
-     * ctor
-     */
-    public function __construct(Configuration $configuration, \daos\Database $database, IconStore $iconStore, Image $imageHelper, \daos\Items $itemsDao, Logger $logger, \daos\Sources $sourcesDao, SpoutLoader $spoutLoader, ThumbnailStore $thumbnailStore, WebClient $webClient) {
-        $this->configuration = $configuration;
-        $this->database = $database;
-        $this->iconStore = $iconStore;
-        $this->imageHelper = $imageHelper;
-        $this->itemsDao = $itemsDao;
-        $this->logger = $logger;
-        $this->sourcesDao = $sourcesDao;
-        $this->spoutLoader = $spoutLoader;
-        $this->thumbnailStore = $thumbnailStore;
-        $this->webClient = $webClient;
+    public function __construct(
+        private Configuration $configuration,
+        private daos\DatabaseInterface $database,
+        private IconStore $iconStore,
+        private Image $imageHelper,
+        private daos\Items $itemsDao,
+        private Logger $logger,
+        private daos\Sources $sourcesDao,
+        private SpoutLoader $spoutLoader,
+        private ThumbnailStore $thumbnailStore,
+        private WebClient $webClient
+    ) {
     }
 
     /**
      * updates all sources
-     *
-     * @return void
      */
-    public function update() {
-        foreach ($this->sourcesDao->getByLastUpdate() as $source) {
+    public function update(UpdateVisitor $updateVisitor): void {
+        $count = $this->sourcesDao->count();
+        $updateVisitor->started($count);
+
+        $sources = $this->sourcesDao->getByLastUpdate();
+        foreach ($sources as $source) {
             $this->fetch($source);
+            $updateVisitor->sourceUpdated();
         }
         $this->cleanup();
+        $updateVisitor->finished();
     }
 
     /**
@@ -79,10 +57,8 @@ class ContentLoader {
      * @param int $id id of the source to update
      *
      * @throws FileNotFoundException it there is no source with the id
-     *
-     * @return void
      */
-    public function updateSingle($id) {
+    public function updateSingle(int $id): void {
         $source = $this->sourcesDao->get($id);
         if ($source) {
             $this->fetch($source);
@@ -97,15 +73,15 @@ class ContentLoader {
      * returns an error or true on success
      *
      * @param mixed $source the current source
-     *
-     * @return void
      */
-    public function fetch($source) {
+    public function fetch(mixed $source): void {
         $lastEntry = $source['lastentry'];
 
         // at least 20 seconds wait until next update of a given source
         $this->updateSource($source, null);
         if (time() - $source['lastupdate'] < 20) {
+            $this->logger->debug('Source ' . $source['title'] . ' updated less then 20 seconds ago, skipping.');
+
             return;
         }
 
@@ -132,169 +108,162 @@ class ContentLoader {
             $spout->load(
                 json_decode(html_entity_decode($source['params']), true)
             );
+
+            // current date
+            $minDate = null;
+            if ($this->configuration->itemsLifetime !== 0) {
+                $minDate = new \DateTime();
+                $minDate->sub(new \DateInterval('P' . $this->configuration->itemsLifetime . 'D'));
+                $this->logger->debug('minimum date: ' . $minDate->format('Y-m-d H:i:s'));
+            }
+
+            // insert new items in database
+            $this->logger->debug('start item fetching');
+
+            // Spout iterator can be a generator so we cannot iterate it twice.
+            $items = $spout->getItems();
+            if (!is_array($items)) {
+                $items = iterator_to_array($items);
+            }
+
+            $itemsInFeed = [];
+            foreach ($items as $item) {
+                $itemsInFeed[] = $item->getId();
+            }
+            $itemsFound = $this->itemsDao->findAll($itemsInFeed, $source['id']);
+
+            $iconCache = [];
+            $sourceIconUrl = null;
+            $itemsSeen = [];
+
+            $filterExpression = trim($source['filter'] ?? '');
+            try {
+                $filter = FilterFactory::fromString($filterExpression);
+            } catch (FilterSyntaxError $exception) {
+                $this->logger->error('filter error: ' . $exception->getMessage());
+                $filter = new AcceptingFilter();
+            }
+
+            foreach ($items as $item) {
+                $titlePlainText = $item->getTitle()->getPlainText();
+                // item already in database?
+                if (isset($itemsFound[$item->getId()])) {
+                    $this->logger->debug('item "' . $titlePlainText . '" already in database.');
+                    $itemsSeen[] = $itemsFound[$item->getId()];
+                    continue;
+                }
+
+                // test date: continue with next if item too old
+                $itemDate = $item->getDate();
+                $itemDate ??= new \DateTimeImmutable();
+                if ($minDate !== null && $itemDate < $minDate) {
+                    $this->logger->debug('item "' . $titlePlainText . '" (' . $itemDate->format(\DateTime::ATOM) . ') older than ' . $this->configuration->itemsLifetime . ' days');
+                    continue;
+                }
+
+                // date in future? Set current date
+                $now = new \DateTimeImmutable();
+                if ($itemDate > $now) {
+                    $itemDate = $now;
+                }
+
+                // insert new item
+                $this->logger->debug('start insertion of new item "' . $titlePlainText . '"');
+
+                try {
+                    // fetch content
+                    $content = $item->getContent();
+
+                    // sanitize content html
+                    $content = $this->sanitizeContent($content);
+                } catch (\Throwable $e) {
+                    $content = HtmlString::fromPlainText('Error: Content not fetched. Reason: ' . $e->getMessage());
+                    $this->logger->error('Can not fetch "' . $titlePlainText . '"', ['exception' => $e]);
+                }
+
+                // sanitize title
+                $title = HtmlString::fromRaw(trim($this->sanitizeField($item->getTitle())->getRaw()));
+
+                // Check sanitized title against filter
+                if (!$filter->admits($item->withTitle($title)->withContent($content))) {
+                    continue;
+                }
+
+                $this->logger->debug('item content sanitized');
+
+                $newItem = [
+                    'title' => $title,
+                    'content' => $content,
+                    'source' => $source['id'],
+                    'datetime' => $itemDate,
+                    'uid' => $item->getId(),
+                    'link' => htmLawed($item->getLink(), ['deny_attribute' => '*', 'elements' => '-*']),
+                    'author' => $item->getAuthor(),
+                    'thumbnail' => null,
+                    'icon' => null,
+                ];
+
+                $thumbnailUrl = $item->getThumbnail();
+                if ($thumbnailUrl !== null) {
+                    // save thumbnail
+                    $newItem['thumbnail'] = $this->fetchThumbnail($thumbnailUrl) ?: '';
+                }
+
+                try {
+                    // Clear the value in case we need it in catch clause.
+                    $iconUrl = null;
+                    $iconUrl = $item->getIcon();
+                    if ($iconUrl !== null) {
+                        if (isset($iconCache[$iconUrl])) {
+                            $this->logger->debug('reusing recently used icon: ' . $iconUrl);
+                        } else {
+                            // save icon
+                            $iconCache[$iconUrl] = $this->fetchIcon($iconUrl) ?: '';
+                        }
+                        $newItem['icon'] = $iconCache[$iconUrl];
+                    } elseif ($sourceIconUrl !== null) {
+                        $this->logger->debug('using the source icon');
+                        $newItem['icon'] = $sourceIconUrl;
+                    } else {
+                        try {
+                            // we do not want to run this more than once
+                            $sourceIconUrl = $spout->getIcon() ?: '';
+
+                            if (strlen(trim($sourceIconUrl)) > 0) {
+                                // save source icon
+                                $sourceIconUrl = $this->fetchIcon($sourceIconUrl) ?: '';
+                                $newItem['icon'] = $sourceIconUrl;
+                            } else {
+                                $this->logger->debug('no icon for this item or source');
+                            }
+                        } catch (\Throwable $e) {
+                            // cache failure
+                            $sourceIconUrl = '';
+                            $this->logger->error('feed icon: error', ['exception' => $e]);
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // cache failure
+                    if ($iconUrl !== null) {
+                        $iconCache[$iconUrl] = '';
+                    }
+                    $this->logger->error('icon: error', ['exception' => $e]);
+                }
+
+                // insert new item
+                $this->itemsDao->add($newItem);
+                $this->logger->debug('item inserted');
+
+                $this->logger->debug('Memory usage: ' . memory_get_usage());
+                $this->logger->debug('Memory peak usage: ' . memory_get_peak_usage());
+
+                $lastEntry = max($lastEntry, $itemDate->getTimestamp());
+            }
         } catch (\Throwable $e) {
             $this->logger->error('error loading feed content for ' . $source['title'], ['exception' => $e]);
             $this->sourcesDao->error($source['id'], date('Y-m-d H:i:s') . 'error loading feed content: ' . $e->getMessage());
 
             return;
-        } catch (\Exception $e) {
-            // For PHP 5
-            $this->logger->error('error loading feed content for ' . $source['title'], ['exception' => $e]);
-            $this->sourcesDao->error($source['id'], date('Y-m-d H:i:s') . 'error loading feed content: ' . $e->getMessage());
-
-            return;
-        }
-
-        // current date
-        $minDate = new \DateTime();
-        $minDate->sub(new \DateInterval('P' . $this->configuration->itemsLifetime . 'D'));
-        $this->logger->debug('minimum date: ' . $minDate->format('Y-m-d H:i:s'));
-
-        // insert new items in database
-        $this->logger->debug('start item fetching');
-
-        $itemsInFeed = [];
-        foreach ($spout as $item) {
-            $itemsInFeed[] = $item->getId();
-        }
-        $itemsFound = $this->itemsDao->findAll($itemsInFeed, $source['id']);
-
-        $iconCache = [];
-        $sourceIconUrl = null;
-        $itemsSeen = [];
-        foreach ($spout as $item) {
-            // item already in database?
-            if (isset($itemsFound[$item->getId()])) {
-                $this->logger->debug('item "' . $item->getTitle() . '" already in database.');
-                $itemsSeen[] = $itemsFound[$item->getId()];
-                continue;
-            }
-
-            // test date: continue with next if item too old
-            $itemDate = new \DateTime($item->getDate());
-            // if date cannot be parsed it will default to epoch. Change to current time.
-            if ($itemDate->getTimestamp() == 0) {
-                $itemDate = new \DateTime();
-            }
-            if ($itemDate < $minDate) {
-                $this->logger->debug('item "' . $item->getTitle() . '" (' . $item->getDate() . ') older than ' . $this->configuration->itemsLifetime . ' days');
-                continue;
-            }
-
-            // date in future? Set current date
-            $now = new \DateTime();
-            if ($itemDate > $now) {
-                $itemDate = $now;
-            }
-
-            // insert new item
-            $this->logger->debug('start insertion of new item "' . $item->getTitle() . '"');
-
-            $content = '';
-            try {
-                // fetch content
-                $content = $item->getContent();
-
-                // sanitize content html
-                $content = $this->sanitizeContent($content);
-            } catch (\Throwable $e) {
-                $content = 'Error: Content not fetched. Reason: ' . $e->getMessage();
-                $this->logger->error('Can not fetch "' . $item->getTitle() . '"', ['exception' => $e]);
-            } catch (\Exception $e) {
-                // For PHP 5
-                $content = 'Error: Content not fetched. Reason: ' . $e->getMessage();
-                $this->logger->error('Can not fetch "' . $item->getTitle() . '"', ['exception' => $e]);
-            }
-
-            // sanitize title
-            $title = $this->sanitizeField($item->getTitle());
-            if (strlen(trim($title)) === 0) {
-                $title = '[' . \F3::get('lang_no_title') . ']';
-            }
-
-            // Check sanitized title against filter
-            if ($this->filter($source, $title, $content) === false) {
-                continue;
-            }
-
-            // sanitize author
-            $author = $this->sanitizeField($item->getAuthor());
-
-            $this->logger->debug('item content sanitized');
-
-            $newItem = [
-                'title' => $title,
-                'content' => $content,
-                'source' => $source['id'],
-                'datetime' => $itemDate->format('Y-m-d H:i:s'),
-                'uid' => $item->getId(),
-                'link' => htmLawed($item->getLink(), ['deny_attribute' => '*', 'elements' => '-*']),
-                'author' => $author,
-                'thumbnail' => null,
-                'icon' => null,
-            ];
-
-            $thumbnailUrl = $item->getThumbnail();
-            if (strlen(trim($thumbnailUrl)) > 0) {
-                // save thumbnail
-                $newItem['thumbnail'] = $this->fetchThumbnail($thumbnailUrl) ?: '';
-            }
-
-            try {
-                $iconUrl = $item->getIcon();
-                if (strlen(trim($iconUrl)) > 0) {
-                    if (isset($iconCache[$iconUrl])) {
-                        $this->logger->debug('reusing recently used icon: ' . $iconUrl);
-                    } else {
-                        // save icon
-                        $iconCache[$iconUrl] = $this->fetchIcon($iconUrl) ?: '';
-                    }
-                    $newItem['icon'] = $iconCache[$iconUrl];
-                } elseif ($sourceIconUrl !== null) {
-                    $this->logger->debug('using the source icon');
-                    $newItem['icon'] = $sourceIconUrl;
-                } else {
-                    try {
-                        // we do not want to run this more than once
-                        $sourceIconUrl = $item->getSourceIcon() ?: '';
-
-                        if (strlen(trim($sourceIconUrl)) > 0) {
-                            // save source icon
-                            $sourceIconUrl = $this->fetchIcon($sourceIconUrl) ?: '';
-                            $newItem['icon'] = $sourceIconUrl;
-                        } else {
-                            $this->logger->debug('no icon for this item or source');
-                        }
-                    } catch (\Throwable $e) {
-                        // cache failure
-                        $sourceIconUrl = '';
-                        $this->logger->error('feed icon: error', ['exception' => $e]);
-                    } catch (\Exception $e) {
-                        // For PHP 5
-                        // cache failure
-                        $sourceIconUrl = '';
-                        $this->logger->error('feed icon: error', ['exception' => $e]);
-                    }
-                }
-            } catch (\Throwable $e) {
-                // cache failure
-                $iconCache[$iconUrl] = '';
-                $this->logger->error('icon: error', ['exception' => $e]);
-            } catch (\Exception $e) {
-                // For PHP 5
-                // cache failure
-                $iconCache[$iconUrl] = '';
-                $this->logger->error('icon: error', ['exception' => $e]);
-            }
-
-            // insert new item
-            $this->itemsDao->add($newItem);
-            $this->logger->debug('item inserted');
-
-            $this->logger->debug('Memory usage: ' . memory_get_usage());
-            $this->logger->debug('Memory peak usage: ' . memory_get_peak_usage());
-
-            $lastEntry = max($lastEntry, $itemDate->getTimestamp());
         }
 
         // destroy feed object (prevent memory issues)
@@ -311,42 +280,15 @@ class ContentLoader {
     }
 
     /**
-     * Check if a new item matches the filter
-     *
-     * @param array{filter: string} $source
-     * @param string $title
-     * @param string $content
-     *
-     * @return bool indicating filter success
-     */
-    protected function filter($source, $title, $content) {
-        if (strlen(trim($source['filter'])) !== 0) {
-            $resultTitle = @preg_match($source['filter'], $title);
-            $resultContent = @preg_match($source['filter'], $content);
-            if ($resultTitle === false || $resultContent === false) {
-                $this->logger->error('filter error: ' . $source['filter']);
-
-                return true; // do not filter out item
-            }
-            // test filter
-            if ($resultTitle === 0 && $resultContent === 0) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
      * Sanitize content for preventing XSS attacks.
      *
-     * @param string $content content of the given feed
+     * @param HtmlString $content content of the given feed
      *
-     * @return mixed|string sanitized content
+     * @return HtmlString sanitized content
      */
-    protected function sanitizeContent($content) {
-        return htmLawed(
-            $content,
+    private function sanitizeContent(HtmlString $content): HtmlString {
+        return HtmlString::fromRaw(htmLawed(
+            $content->getRaw(),
             [
                 'safe' => 1,
                 'deny_attribute' => '* -alt -title -src -href -target',
@@ -356,24 +298,24 @@ class ContentLoader {
                 'elements' => 'div,p,ul,li,a,img,dl,dt,dd,h1,h2,h3,h4,h5,h6,ol,br,table,tr,td,blockquote,pre,ins,del,th,thead,tbody,b,i,strong,em,tt,sub,sup,s,strike,code',
             ],
             'img=width, height'
-        );
+        ));
     }
 
     /**
      * Sanitize a simple field
      *
-     * @param string $value content of the given field
+     * @param HtmlString $value content of the given field
      *
-     * @return mixed|string sanitized content
+     * @return HtmlString sanitized content
      */
-    protected function sanitizeField($value) {
-        return htmLawed(
-            $value,
+    private function sanitizeField(HtmlString $value): HtmlString {
+        return HtmlString::fromRaw(htmLawed(
+            $value->getRaw(),
             [
                 'deny_attribute' => '* -href -title -target',
                 'elements' => 'a,br,ins,del,b,i,strong,em,tt,sub,sup,s,code',
             ]
-        );
+        ));
     }
 
     /**
@@ -383,7 +325,7 @@ class ContentLoader {
      *
      * @return ?string path in the thumbnails directory
      */
-    protected function fetchThumbnail($url) {
+    private function fetchThumbnail(string $url): ?string {
         try {
             $data = $this->webClient->request($url);
             $format = self::THUMBNAIL_FORMAT;
@@ -391,15 +333,10 @@ class ContentLoader {
 
             if ($image !== null) {
                 return $this->thumbnailStore->store($url, $image->getData());
-            } else {
-                $this->logger->error('thumbnail generation error: ' . $url);
             }
-        } catch (\Throwable $e) {
-            $this->logger->error("failed to retrieve thumbnail $url,", ['exception' => $e]);
 
-            return null;
-        } catch (\Exception $e) {
-            // For PHP 5
+            $this->logger->error('thumbnail generation error: ' . $url);
+        } catch (\Throwable $e) {
             $this->logger->error("failed to retrieve thumbnail $url,", ['exception' => $e]);
 
             return null;
@@ -415,7 +352,7 @@ class ContentLoader {
      *
      * @return ?string path in the favicons directory
      */
-    protected function fetchIcon($url) {
+    private function fetchIcon(string $url): ?string {
         try {
             $data = $this->webClient->request($url);
             $format = Image::FORMAT_PNG;
@@ -423,15 +360,10 @@ class ContentLoader {
 
             if ($image !== null) {
                 return $this->iconStore->store($url, $image->getData());
-            } else {
-                $this->logger->error('icon generation error: ' . $url);
             }
-        } catch (\Throwable $e) {
-            $this->logger->error("failed to retrieve image $url,", ['exception' => $e]);
 
-            return null;
-        } catch (\Exception $e) {
-            // For PHP 5
+            $this->logger->error('icon generation error: ' . $url);
+        } catch (\Throwable $e) {
             $this->logger->error("failed to retrieve image $url,", ['exception' => $e]);
 
             return null;
@@ -443,9 +375,9 @@ class ContentLoader {
     /**
      * Obtain title for given data
      *
-     * @param array $data
+     * @param array<string, mixed>&array{spout: string} $data
      */
-    public function fetchTitle($data) {
+    public function fetchTitle(array $data): ?string {
         $this->logger->debug('Start fetching spout title');
 
         // get spout
@@ -467,14 +399,9 @@ class ContentLoader {
             $this->logger->error('Error fetching title', ['exception' => $e]);
 
             return null;
-        } catch (\Exception $e) {
-            // For PHP 5
-            $this->logger->error('Error fetching title', ['exception' => $e]);
-
-            return null;
         }
 
-        $title = $spout->getSpoutTitle();
+        $title = $spout->getTitle();
         $spout->destroy();
 
         return $title;
@@ -482,27 +409,30 @@ class ContentLoader {
 
     /**
      * clean up messages, thumbnails etc.
-     *
-     * @return void
      */
-    public function cleanup() {
+    public function cleanup(): void {
         // cleanup orphaned and old items
         $this->logger->debug('cleanup orphaned and old items');
-        $this->itemsDao->cleanup($this->configuration->itemsLifetime);
+        $minDate = null;
+        if ($this->configuration->itemsLifetime !== 0) {
+            $minDate = new \DateTime();
+            $minDate->sub(new \DateInterval('P' . $this->configuration->itemsLifetime . 'D'));
+        }
+        $this->itemsDao->cleanup($minDate);
         $this->logger->debug('cleanup orphaned and old items finished');
 
         // delete orphaned thumbnails
         $this->logger->debug('delete orphaned thumbnails');
-        $this->thumbnailStore->cleanup(function($file) {
-            return $this->itemsDao->hasThumbnail($file);
-        });
+        $this->thumbnailStore->cleanup(
+            fn(string $file): bool => $this->itemsDao->hasThumbnail($file)
+        );
         $this->logger->debug('delete orphaned thumbnails finished');
 
         // delete orphaned icons
         $this->logger->debug('delete orphaned icons');
-        $this->iconStore->cleanup(function($file) {
-            return $this->itemsDao->hasIcon($file);
-        });
+        $this->iconStore->cleanup(
+            fn(string $file): bool => $this->itemsDao->hasIcon($file)
+        );
         $this->logger->debug('delete orphaned icons finished');
 
         // optimize database
@@ -517,7 +447,7 @@ class ContentLoader {
      * @param mixed $source source object
      * @param ?int $lastEntry timestamp of the newest item or NULL when no items were added
      */
-    protected function updateSource($source, $lastEntry) {
+    private function updateSource(mixed $source, ?int $lastEntry): void {
         // remove previous error
         if ($source['error'] !== null) {
             $this->sourcesDao->error($source['id'], '');

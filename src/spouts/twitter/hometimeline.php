@@ -1,60 +1,108 @@
 <?php
 
+// SPDX-FileCopyrightText: 2011–2013 Tobias Zeising <tobias.zeising@aditu.de>
+// SPDX-FileCopyrightText: 2013 Tim Gerundt <tim@gerundt.de>
+// SPDX-FileCopyrightText: 2017–2023 Jan Tojnar <jtojnar@gmail.com>
+// SPDX-FileCopyrightText: 2018 Binnette <binnette@gmail.com>
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+declare(strict_types=1);
+
 namespace spouts\twitter;
+
+use spouts\Item;
+use spouts\Parameter;
 
 /**
  * Spout for fetching the twitter timeline of your twitter account
  *
- * @copyright  Copyright (c) Tobias Zeising (http://www.aditu.de)
- * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
- * @author     Tobias Zeising <tobias.zeising@aditu.de>
+ * @extends \spouts\spout<null>
  */
-class hometimeline extends \spouts\twitter\usertimeline {
-    /** @var string name of source */
-    public $name = 'Twitter: your timeline';
+class hometimeline extends \spouts\spout {
+    public string $name = 'Twitter: your timeline';
 
-    /** @var string description of this source type */
-    public $description = 'Fetch your twitter timeline.';
+    public string $description = 'Fetch your twitter timeline.';
 
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'consumer_key' => [
             'title' => 'Consumer Key',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'consumer_secret' => [
             'title' => 'Consumer Secret',
-            'type' => 'password',
+            'type' => Parameter::TYPE_PASSWORD,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'access_key' => [
             'title' => 'Access Key',
-            'type' => 'password',
+            'type' => Parameter::TYPE_PASSWORD,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'access_secret' => [
             'title' => 'Access Secret',
-            'type' => 'password',
+            'type' => Parameter::TYPE_PASSWORD,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
     ];
 
-    public function load(array $params) {
-        $this->client = $this->getHttpClient($params['consumer_key'], $params['consumer_secret'], $params['access_key'], $params['access_secret']);
+    /** URL of the source */
+    private string $htmlUrl = '';
 
-        $this->items = $this->fetchTwitterTimeline('statuses/home_timeline');
+    /** Title of the source */
+    private ?string $title = null;
+
+    /** @var iterable<Item<null>> current fetched items */
+    private iterable $items = [];
+
+    public function __construct(
+        private readonly TwitterV1ApiClientFactory $clientFactory
+    ) {
+    }
+
+    /**
+     * @param array{consumer_key: string, consumer_secret: string, access_key: string, access_secret: string} $params
+     */
+    public function load(array $params): void {
+        $client = $this->clientFactory->create(
+            $params['consumer_key'],
+            $params['consumer_secret'],
+            $params['access_key'],
+            $params['access_secret']
+        );
+
+        $this->items = $client->fetchTimeline('statuses/home_timeline');
 
         $this->htmlUrl = 'https://twitter.com/';
 
-        $this->spoutTitle = 'Home timeline';
+        $this->title = 'Home timeline';
+    }
+
+    public function getTitle(): ?string {
+        return $this->title;
+    }
+
+    public function getHtmlUrl(): ?string {
+        return $this->htmlUrl;
+    }
+
+    /**
+     * @return iterable<Item<null>> list of items
+     */
+    public function getItems(): iterable {
+        return $this->items;
+    }
+
+    public function destroy(): void {
+        unset($this->items);
+        $this->items = [];
     }
 }

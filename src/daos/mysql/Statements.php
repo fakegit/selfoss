@@ -1,6 +1,10 @@
 <?php
 
-namespace daos\mysql;
+declare(strict_types=1);
+
+namespace Selfoss\daos\mysql;
+
+use Selfoss\daos\DatabaseInterface;
 
 /**
  * MySQL specific statements
@@ -9,16 +13,16 @@ namespace daos\mysql;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Alexandre Rossi <alexandre.rossi@gmail.com>
  */
-class Statements implements \daos\StatementsInterface {
+class Statements implements \Selfoss\daos\StatementsInterface {
     /**
      * null first for order by clause
      *
      * @param string $column column to concat
-     * @param string $order
+     * @param 'DESC'|'ASC' $order
      *
      * @return string full statement
      */
-    public static function nullFirst($column, $order) {
+    public static function nullFirst(string $column, string $order): string {
         return "$column $order";
     }
 
@@ -29,7 +33,7 @@ class Statements implements \daos\StatementsInterface {
      *
      * @return string full statement
      */
-    public static function sumBool($column) {
+    public static function sumBool(string $column): string {
         return "SUM($column)";
     }
 
@@ -40,7 +44,7 @@ class Statements implements \daos\StatementsInterface {
      *
      * @return string full statement
      */
-    public static function isTrue($column) {
+    public static function isTrue(string $column): string {
         return "$column=1";
     }
 
@@ -51,7 +55,7 @@ class Statements implements \daos\StatementsInterface {
      *
      * @return string full statement
      */
-    public static function isFalse($column) {
+    public static function isFalse(string $column): string {
         return "$column=0";
     }
 
@@ -62,7 +66,7 @@ class Statements implements \daos\StatementsInterface {
      *
      * @return string combined expression
      */
-    public static function exprOr(...$exprs) {
+    public static function exprOr(string ...$exprs): string {
         return '(' . implode(' OR ', $exprs) . ')';
     }
 
@@ -70,68 +74,53 @@ class Statements implements \daos\StatementsInterface {
      * check if CSV column matches a value.
      *
      * @param string $column CSV column to check
-     * @param mixed $value value to search in CSV column
+     * @param string $value value to search in CSV column
      *
      * @return string full statement
      */
-    public static function csvRowMatches($column, $value) {
+    public static function csvRowMatches(string $column, string $value): string {
         if ($value[0] === ':') {
             $value = "_utf8mb4 $value";
         }
 
-        return "CONCAT(',', $column, ',') LIKE CONCAT('%,', $value, ',%') COLLATE utf8mb4_general_ci";
+        return "CONCAT(',', $column, ',') LIKE CONCAT('%,', $value, ',%') COLLATE utf8mb4_bin ESCAPE ''";
     }
 
     /**
      * check column against int list.
      *
      * @param string $column column to check
-     * @param int[] $ints of string or int values to match column against
+     * @param int[] $ints list of ints to match column against
      *
      * @return ?string full statement
      */
-    public static function intRowMatches($column, array $ints) {
+    public static function intRowMatches(string $column, array $ints): ?string {
         // checks types
         if (count($ints) === 0) {
             return null;
         }
-        $all_ints = [];
-        foreach ($ints as $ints_str) {
-            $i = (int) $ints_str;
-            if ($i > 0) {
-                $all_ints[] = $i;
-            }
-        }
 
-        if (count($all_ints) > 0) {
-            $comma_ints = implode(',', $all_ints);
+        $comma_ints = implode(',', $ints);
 
-            return $column . " IN ($comma_ints)";
-        }
-
-        return null;
+        return $column . " IN ($comma_ints)";
     }
 
     /**
      * Return the statement required to update a datetime column to the current
      * datetime.
      *
-     * @param string $column
-     *
      * @return string full statement
      */
-    public static function rowTouch($column) {
+    public static function rowTouch(string $column): string {
         return $column . '=NOW()';
     }
 
     /**
      * Convert boolean into a representation recognized by the database engine.
      *
-     * @param bool $bool
-     *
      * @return string representation of boolean
      */
-    public static function bool($bool) {
+    public static function bool(bool $bool): string {
         return $bool ? 'TRUE' : 'FALSE';
     }
 
@@ -143,7 +132,7 @@ class Statements implements \daos\StatementsInterface {
      *
      * @return string representation of datetime
      */
-    public static function datetime(\DateTime $date) {
+    public static function datetime(\DateTime $date): string {
         // mysql supports ISO8601 datetime comparisons
         return $date->format(\DateTime::ATOM);
     }
@@ -152,40 +141,45 @@ class Statements implements \daos\StatementsInterface {
      * Ensure row values have the appropriate PHP type. This assumes we are
      * using buffered queries (sql results are in PHP memory).
      *
-     * @param array $rows array of associative array representing row results
-     * @param array $expectedRowTypes associative array mapping columns to PDO types
+     * @param array<array<mixed>> $rows array of associative array representing row results
+     * @param array<string, DatabaseInterface::PARAM_*> $expectedRowTypes associative array mapping columns to PDO types
      *
-     * @return array of associative array representing row results having
+     * @return array<array<mixed>> of associative array representing row results having
      *         expected types
      */
-    public static function ensureRowTypes(array $rows, array $expectedRowTypes) {
+    public static function ensureRowTypes(array $rows, array $expectedRowTypes): array {
         foreach ($rows as $rowIndex => $row) {
             foreach ($expectedRowTypes as $columnIndex => $type) {
                 if (array_key_exists($columnIndex, $row)) {
+                    if ($type & DatabaseInterface::PARAM_NULL) {
+                        $type ^= DatabaseInterface::PARAM_NULL;
+                        if ($row[$columnIndex] === null) {
+                            // Keep as is.
+                            continue;
+                        }
+                    }
                     switch ($type) {
-                        case \daos\PARAM_INT:
+                        case DatabaseInterface::PARAM_INT:
+                            // PDO returns a string in PHP < 8.1.
                             $value = (int) $row[$columnIndex];
                             break;
-                        case \daos\PARAM_BOOL:
-                            if ($row[$columnIndex] === '1') {
+                        case DatabaseInterface::PARAM_BOOL:
+                            // PDO returns '0'|'1' in PHP < 8.1.
+                            if ($row[$columnIndex] === 1 || $row[$columnIndex] === '1') {
                                 $value = true;
                             } else {
                                 $value = false;
                             }
                             break;
-                        case \daos\PARAM_CSV:
+                        case DatabaseInterface::PARAM_CSV:
                             if ($row[$columnIndex] === '') {
                                 $value = [];
                             } else {
                                 $value = explode(',', $row[$columnIndex]);
                             }
                             break;
-                        case \daos\PARAM_DATETIME:
-                            if (empty($row[$columnIndex])) {
-                                $value = null;
-                            } else {
-                                $value = new \DateTime($row[$columnIndex]);
-                            }
+                        case DatabaseInterface::PARAM_DATETIME:
+                            $value = new \DateTime($row[$columnIndex]);
                             break;
                         default:
                             $value = null;
@@ -204,10 +198,8 @@ class Statements implements \daos\StatementsInterface {
      * convert string array to string for storage in table row
      *
      * @param string[] $a
-     *
-     * @return string
      */
-    public static function csvRow(array $a) {
+    public static function csvRow(array $a): string {
         $filtered = [];
         foreach ($a as $s) {
             $t = trim($s);
@@ -227,7 +219,7 @@ class Statements implements \daos\StatementsInterface {
      *
      * @return string expression for matching
      */
-    public static function matchesRegex($value, $regex) {
+    public static function matchesRegex(string $value, string $regex): string {
         // https://dev.mysql.com/doc/refman/5.7/en/regexp.html
         return $value . ' REGEXP ' . $regex;
     }

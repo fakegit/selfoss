@@ -1,6 +1,8 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
+
+namespace Selfoss\helpers;
 
 use Elphin\IcoFileLoader\IcoFileService;
 use GuzzleHttp\Psr7\Uri;
@@ -15,16 +17,16 @@ use WideImage\WideImage;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Image {
-    const FORMAT_JPEG = 'jpeg';
-    const FORMAT_PNG = 'png';
+final readonly class Image {
+    public const FORMAT_JPEG = 'jpeg';
+    public const FORMAT_PNG = 'png';
 
-    private static $extensions = [
+    private const EXTENSIONS = [
         self::FORMAT_JPEG => 'jpg',
         self::FORMAT_PNG => 'png',
     ];
 
-    private static $imageTypes = [
+    public const IMAGE_TYPES = [
         // IANA assigned type
         'image/bmp' => 'bmp',
         'image/gif' => 'gif',
@@ -43,46 +45,34 @@ class Image {
         'application/ico' => 'ico',
     ];
 
-    private static $iconRelWeights = [
-        'apple-touch-icon-precomposed' => 3,
-        'apple-touch-icon' => 2,
-        'shortcut icon' => 1,
-        'icon' => 1,
-    ];
-
-    /** @var Logger */
-    private $logger;
-
-    /** @var WebClient */
-    private $webClient;
-
-    public function __construct(Logger $logger, WebClient $webClient) {
-        $this->logger = $logger;
-        $this->webClient = $webClient;
+    public function __construct(
+        private Logger $logger,
+        private WebClient $webClient
+    ) {
     }
 
     /**
      * Get preferred extension for the format.
      *
      * @param self::FORMAT_* $format
-     *
-     * @return string
      */
-    public static function getExtension($format) {
-        return self::$extensions[$format];
+    public static function getExtension(string $format): string {
+        return self::EXTENSIONS[$format];
     }
 
     /**
      * fetch favicon
      *
      * @param string $url source url
-     * @param bool $isHtmlUrl
-     * @param ?int $width
-     * @param ?int $height
      *
      * @return ?array{string, ImageHolder} pair of URL and blob containing the image data
      */
-    public function fetchFavicon($url, $isHtmlUrl = false, $width = null, $height = null) {
+    public function fetchFavicon(
+        string $url,
+        bool $isHtmlUrl = false,
+        ?int $width = null,
+        ?int $height = null
+    ): ?array {
         // try given url
         try {
             $http = $this->webClient->getHttpClient();
@@ -94,11 +84,6 @@ class Image {
                 throw new \Exception(substr($blob, 0, 512));
             }
         } catch (\Throwable $e) {
-            $this->logger->error("icon: failed to retrieve URL $url", ['exception' => $e]);
-
-            return null;
-        } catch (\Exception $e) {
-            // For PHP 5
             $this->logger->error("icon: failed to retrieve URL $url", ['exception' => $e]);
 
             return null;
@@ -125,19 +110,16 @@ class Image {
                         return [$shortcutIconUrl, $image];
                     }
                 } catch (\Throwable $e) {
-                    $this->logger->error("failed to retrieve image $url,", ['exception' => $e]);
-                } catch (\Exception $e) {
-                    // For PHP 5
-                    $this->logger->error("failed to retrieve image $url,", ['exception' => $e]);
+                    $this->logger->error("failed to retrieve shortcut icon $url,", ['exception' => $e]);
                 }
             }
         }
 
-        $urlElements = parse_url($url);
+        $urlElements = new Uri($url);
 
         // search domain/favicon.ico
-        if (isset($urlElements['scheme']) && isset($urlElements['host'])) {
-            $url = $urlElements['scheme'] . '://' . $urlElements['host'] . '/favicon.ico';
+        if ($urlElements->getScheme() !== '' && $urlElements->getAuthority() !== '') {
+            $url = (string) $urlElements->withPath('/favicon.ico')->withFragment('')->withQuery('');
             try {
                 $data = $this->webClient->request($url);
                 $image = $this->loadImage($data, self::FORMAT_PNG, $width, $height);
@@ -146,10 +128,7 @@ class Image {
                     return [$url, $image];
                 }
             } catch (\Throwable $e) {
-                $this->logger->error("failed to retrieve image $url,", ['exception' => $e]);
-            } catch (\Exception $e) {
-                // For PHP 5
-                $this->logger->error("failed to retrieve image $url,", ['exception' => $e]);
+                $this->logger->error("failed to retrieve favicon $url,", ['exception' => $e]);
             }
         }
 
@@ -159,20 +138,24 @@ class Image {
     /**
      * Load image from URL, optionally resize it and convert it to desired format.
      *
-     * @param string $data
-     * @param self::FORMAT_JPEG|self::FORMAT_PNG $format file format of output file
+     * @param self::FORMAT_* $format file format of output file
      * @param ?int $width target width
      * @param ?int $height target height
      *
      * @return ?ImageHolder blob containing the processed image
      */
-    public function loadImage($data, $format = self::FORMAT_PNG, $width = null, $height = null) {
+    public function loadImage(
+        string $data,
+        string $format = self::FORMAT_PNG,
+        ?int $width = null,
+        ?int $height = null
+    ): ?ImageHolder {
         $imgInfo = null;
 
         // get image type
         if (extension_loaded('imagick')) {
             // check for svgz or svg
-            if (substr($data, 0, 2) === "\x1f\x8b" && ($d = gzdecode($data) !== false)) {
+            if (str_starts_with($data, "\x1f\x8b") && ($d = gzdecode($data)) !== false) {
                 $data = $d;
             }
 
@@ -189,9 +172,9 @@ class Image {
             }
         }
 
-        $mimeType = isset($imgInfo['mime']) ? strtolower($imgInfo['mime']) : null;
-        if ($mimeType !== null && isset(self::$imageTypes[$mimeType])) {
-            $type = self::$imageTypes[$mimeType];
+        $mimeType = strtolower($imgInfo['mime']);
+        if (isset(self::IMAGE_TYPES[$mimeType])) {
+            $type = self::IMAGE_TYPES[$mimeType];
         } else {
             return null;
         }
@@ -211,7 +194,7 @@ class Image {
             } else {
                 $image->setImageFormat('png24');
                 $image->setImageCompression(\Imagick::COMPRESSION_UNDEFINED);
-                $image->setOption('png:compression-level', 9);
+                $image->setOption('png:compression-level', '9');
             }
 
             return new ImageHolder((string) $image, $format, $image->getImageWidth(), $image->getImageHeight());
@@ -233,9 +216,7 @@ class Image {
                 $image = $icon->findBestForSize($width, $height);
             }
 
-            if ($image === null) {
-                $image = $icon->findBest();
-            }
+            $image ??= $icon->findBest();
 
             if ($image === null) {
                 return null;
@@ -252,19 +233,14 @@ class Image {
         // parse image for saving it later
         try {
             $wideImage = WideImage::load($data);
-        } catch (\Throwable $e) {
-            return null;
-        } catch (\Exception $e) {
-            // For PHP 5
+        } catch (\Throwable) {
             return null;
         }
 
         // resize
-        if ($width !== null && $height !== null) {
-            if (($height !== null && $wideImage->getHeight() > $height) ||
-               ($width !== null && $wideImage->getWidth() > $width)) {
-                $wideImage = $wideImage->resize($width, $height);
-            }
+        if (($height !== null && $wideImage->getHeight() > $height)
+            || ($width !== null && $wideImage->getWidth() > $width)) {
+            $wideImage = $wideImage->resize($width, $height);
         }
 
         // return image as jpg or png

@@ -1,55 +1,34 @@
 <?php
 
-namespace controllers;
+declare(strict_types=1);
 
-use helpers;
-use helpers\View;
+namespace Selfoss\controllers;
+
+use Selfoss\helpers\Authentication\AuthenticationService;
+use Selfoss\helpers\View;
 
 /**
  * Controller for user related tasks
  */
-class Authentication {
-    /** @var helpers\Authentication authentication helper */
-    private $authentication;
-
-    /** @var View view helper */
-    private $view;
-
-    public function __construct(helpers\Authentication $authentication, View $view) {
-        $this->authentication = $authentication;
-        $this->view = $view;
-    }
-
-    /**
-     * password hash generator
-     * html
-     *
-     * @return void
-     */
-    public function password() {
-        readfile(BASEDIR . '/public/hashpassword.html');
+final readonly class Authentication {
+    public function __construct(
+        private AuthenticationService $authenticationService,
+        private View $view
+    ) {
     }
 
     /**
      * login for api json access
      * json
-     *
-     * @return void
      */
-    public function login() {
+    public function login(): void {
         $error = null;
 
-        if (isset($_REQUEST['username'])) {
-            $username = $_REQUEST['username'];
-        } else {
-            $username = '';
+        if (!isset($_REQUEST['username'])) {
             $error = 'no username given';
         }
 
-        if (isset($_REQUEST['password'])) {
-            $password = $_REQUEST['password'];
-        } else {
-            $password = '';
+        if (!isset($_REQUEST['password'])) {
             $error = 'no password given';
         }
 
@@ -60,7 +39,8 @@ class Authentication {
             ]);
         }
 
-        if ($this->authentication->login($username, $password)) {
+        // The function automatically checks the request for credentials.
+        if ($this->authenticationService->isPrivileged()) {
             $this->view->jsonSuccess([
                 'success' => true,
             ]);
@@ -68,18 +48,16 @@ class Authentication {
 
         $this->view->jsonSuccess([
             'success' => false,
-            'error' => \F3::get('lang_login_invalid_credentials'),
+            'error' => 'Wrong username/password',
         ]);
     }
 
     /**
      * logout for api json access
      * json
-     *
-     * @return void
      */
-    public function logout() {
-        $this->authentication->logout();
+    public function logout(): never {
+        $this->authenticationService->destroy();
         $this->view->jsonSuccess([
             'success' => true,
         ]);

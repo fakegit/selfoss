@@ -1,6 +1,8 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
+
+namespace Selfoss\helpers;
 
 /**
  * Helper class for loading images
@@ -9,8 +11,8 @@ namespace helpers;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class ImageUtils {
-    private static $iconRelWeights = [
+final class ImageUtils {
+    private const ICON_REL_WEIGHTS = [
         'apple-touch-icon-precomposed' => 3,
         'apple-touch-icon' => 2,
         'shortcut icon' => 1,
@@ -19,14 +21,8 @@ class ImageUtils {
 
     /**
      * removes $startString, $endString and everything in between from $subject
-     *
-     * @param string $startString
-     * @param string $endString
-     * @param string $subject
-     *
-     * @return string
      */
-    public static function cleanString($startString, $endString, $subject) {
+    public static function cleanString(string $startString, string $endString, string $subject): string {
         while (false !== $p1 = stripos($subject, $startString)) {
             $block = substr($subject, $p1);
             $subject = substr($subject, 0, $p1);
@@ -43,11 +39,9 @@ class ImageUtils {
      * If icons are found, their URLs are returned in an array ordered by size
      * if given or by likely size of not, with the biggest one first.
      *
-     * @param string $html
-     *
-     * @return array
+     * @return string[]
      */
-    public static function parseShortcutIcons($html) {
+    public static function parseShortcutIcons(string $html): array {
         $end = strripos($html, '</head>');
         if ($end > 1) {
             $html = substr($html, 0, $end);
@@ -70,11 +64,12 @@ class ImageUtils {
         $icons = [];
         $i = 0;
         foreach ($links as $link) {
-            if (preg_match('#\shref=(?:("|\')(?P<url>.+)\1|(?P<uq_url>[^\s"\'=><`]+?))#iU', $link[0], $href)) {
+            if (preg_match('#\shref=(?:("|\')(?P<url>.+)\1|(?P<uq_url>[^\s"\'=><`]+?))#iU', $link[0], $href, PREG_UNMATCHED_AS_NULL)) {
+                // For PHPStan: The capture groups are all the alternatives so it cannot be null.
+                /** @var non-empty-string */
+                $url = $href['uq_url'] ?? $href['url'];
                 $icons[] = [
-                    // Unmatched group should return an empty string but they are missing.
-                    // https://bugs.php.net/bug.php?id=50887
-                    'url' => isset($href['uq_url']) && $href['uq_url'] !== '' ? $href['uq_url'] : $href['url'],
+                    'url' => $url,
                     // Sizes are only used by Apple.
                     // https://developer.apple.com/library/archive/documentation/AppleApplications/Reference/SafariWebContent/ConfiguringWebApplications/ConfiguringWebApplications.html
                     'sizes' => preg_match('#\ssizes=("|\'|)(?P<sizes>[0-9\.]+)x\2\1#i', $link[0], $sizes)
@@ -91,22 +86,25 @@ class ImageUtils {
 
         usort($icons, Misc::compareBy(
             // largest icons first
-            [function($val) {
-                return (int) $val['sizes'];
-            }, Misc::ORDER_DESC],
+            [
+                fn($val): int => (int) $val['sizes'],
+                Misc::ORDER_DESC,
+            ],
 
             // then by rel priority
-            [function($val) {
-                return self::$iconRelWeights[$val['rel']];
-            }, Misc::ORDER_DESC],
+            [
+                fn($val): int => self::ICON_REL_WEIGHTS[$val['rel']],
+                Misc::ORDER_DESC,
+            ],
 
             // and finally by order to make the sorting stable
-            'order'
+            ['order']
         ));
 
-        return array_map(function($i) {
-            return $i['url'];
-        }, $icons);
+        return array_map(
+            fn(array $i): string => $i['url'],
+            $icons
+        );
     }
 
     /**
@@ -119,30 +117,25 @@ class ImageUtils {
      *
      * @return ?string content of the src attribute of the first image
      */
-    public static function findFirstImageSource($html) {
+    public static function findFirstImageSource(string $html): ?string {
         if (stripos($html, '<img') !== false) {
             $imgsrc_regex = '#<\s*img [^\>]*src\s*=\s*(["\'])(.*?)\1#im';
-            preg_match($imgsrc_regex, $html, $matches);
-            unset($imgsrc_regex);
-            unset($html);
-            if (is_array($matches) && !empty($matches)) {
-                return $matches[2];
-            } else {
-                return null;
+            if (preg_match($imgsrc_regex, $html, $matches)) {
+                return htmlspecialchars_decode($matches[2]);
             }
-        } else {
+
             return null;
         }
+
+        return null;
     }
 
     /**
      * Detect if given data is an SVG file and not just a HTML document with SVG embedded.
      *
-     * @param string $blob
-     *
      * @return bool true when it is a SVG
      */
-    public static function detectSvg($blob) {
+    public static function detectSvg(string $blob): bool {
         return preg_match('#<svg[\s>]#si', $blob) && !preg_match('#<((!doctype )?html|body)[\s>]#si', $blob);
     }
 }

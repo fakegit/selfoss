@@ -1,6 +1,6 @@
 +++
 title = "Configuration options"
-weight = 100
+weight = 31
 +++
 
 selfoss offers the following configuration parameters. You can set the config parameters in the `config.ini` file.
@@ -53,6 +53,22 @@ Table prefix for MySQL/SQLite databases. This is useful to avoid conflicts when 
 Port for database connections. By default `3306` will be used for MySQL and `5432` for PostgreSQL.
 </div>
 
+### `db_socket`
+<div class="config-option">
+
+A UNIX domain socket used for connecting to the MySQL database server. Usually, you want to use `db_host=localhost`, which should use the default socket path (typically `/run/mysqld/mysqld.sock` for MySQL or `/run/postgresql` for PostgreSQL) but if you need to specify a different location, you can. This is orthogonal to `db_host` option.
+</div>
+
+### `debug`
+<div class="config-option">
+
+Level of detail for diagnostics. Enable this for debug traces if you encounter selfoss internal errors or are developing selfoss.
+
+* `0` (default) – Debugging is disabled, errors will only be [logged](#logger-level).
+* `1` – Debugging is enabled, any error or warning will terminate the application and cause debugging information to be printed into the web browser.
+* `2` – Same as `1` but additional information (HTTP requests) will be logged when fetching feed content.
+</div>
+
 ### `logger_destination`
 <div class="config-option">
 
@@ -76,7 +92,7 @@ number of entries per page on your stream
 ### `items_lifetime`
 <div class="config-option">
 
-days until items will be deleted (starred items will never be deleted)
+Number of days since the item has been last seen after which it can be deleted. In the upcoming selfoss 2.20, you can set it to `0` to disable item deletion. Starred items will never be deleted.
 </div>
 
 ### `base_url`
@@ -148,7 +164,13 @@ set this to `1` to automatically collapse an item when another one is opened.
 ### `auto_stream_more`
 <div class="config-option">
 
-set this to `0` to disable automatic loading of more items when you scroll down. With `1`, a click on a button is required instead.
+set this to `0` to disable automatic loading of more items when you scroll down. Click a button at the bottom of the page will be required instead.
+</div>
+
+### `open_in_background_tab`
+<div class="config-option">
+
+set this to `1` to try to make <kbd>v</kbd> shortcut open articles in new background tab. This [does not work in Chromium based browsers](https://crbug.com/431335).
 </div>
 
 ### `language`
@@ -167,6 +189,7 @@ set `0` or leave empty for auto detection (browser language) or use one of the f
 * Finnish: `fi`
 * French: `fr`
 * French (Canada): `fr-CA`
+* Galician: `gl`
 * German: `de`
 * Hebrew: `he`
 * Hungarian: `hu`
@@ -183,14 +206,9 @@ set `0` or leave empty for auto detection (browser language) or use one of the f
 * Slovak: `sk`
 * Spanish: `es`
 * Swedish: `sv`
+* Tamil: `ta` (will only be available in selfoss 2.20 or later)
 * Turkish: `tr`
 * Ukrainian: `uk`
-</div>
-
-### `anonymizer`
-<div class="config-option">
-
-Set here your anonymizer service url. e.g.: `anonymizer=https://anonym.to/?`
 </div>
 
 ### `allow_public_update_access`
@@ -210,6 +228,7 @@ Set to `1` to allow public access for `/update` (anybody can access and start th
 <dt><code>t</code></dt><dd>Twitter</dd>
 <dt><code>p</code></dt><dd>Pocket</dd>
 <dt><code>d</code></dt><dd>Diaspora</dd>
+<dt><code>m</code></dt><dd>Mastodon (requires <a href="#mastodon"><code>mastodon</code></a> option to be set, will only be available in selfoss 2.20 or later)</dd>
 <dt><code>w</code></dt><dd>Wallabag (requires <a href="#wallabag"><code>wallabag</code></a> option to be set)</dd>
 <dt><code>s</code></dt><dd>Wordpress (requires <a href="#wordpress"><code>wordpress</code></a> option to be set)</dd>
 <dt><code>e</code></dt><dd>E-mail</dd>
@@ -219,6 +238,12 @@ Set to `1` to allow public access for `/update` (anybody can access and start th
 Include the letters for methods you want to use. For example, if you would like to only show Facebook and Twitter share buttons, use `share=ft`.
 
 Defaults to `share=atfpde`.
+</div>
+
+### `mastodon`
+<div class="config-option">
+
+URL of your Mastodon instance, for example `https://example.com`.
 </div>
 
 ### `wallabag`

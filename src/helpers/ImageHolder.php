@@ -1,40 +1,41 @@
 <?php
 
-namespace helpers;
+declare(strict_types=1);
+
+namespace Selfoss\helpers;
 
 /**
  * Class holding image data and accompanying metadata.
  */
-class ImageHolder {
-    /** @var string */
-    private $data;
-    /** @var Image::FORMAT_JPEG|Image::FORMAT_PNG */
-    private $format;
-    /** @var int */
-    private $width;
-    /** @var int */
-    private $height;
-
-    public function __construct($data, $format, $width, $height) {
-        $this->data = $data;
-        $this->format = $format;
-        $this->width = $width;
-        $this->height = $height;
+final readonly class ImageHolder {
+    /**
+     * @param Image::FORMAT_JPEG|Image::FORMAT_PNG $format
+     */
+    public function __construct(
+        private string $data,
+        /** @var Image::FORMAT_JPEG|Image::FORMAT_PNG */
+        private string $format,
+        private int $width,
+        private int $height
+    ) {
     }
 
-    public function getData() {
+    public function getData(): string {
         return $this->data;
     }
 
-    public function getFormat() {
+    /**
+     * @return Image::FORMAT_JPEG|Image::FORMAT_PNG
+     */
+    public function getFormat(): string {
         return $this->format;
     }
 
-    public function getWidth() {
+    public function getWidth(): int {
         return $this->width;
     }
 
-    public function getHeight() {
+    public function getHeight(): int {
         return $this->height;
     }
 }

@@ -1,9 +1,13 @@
 <?php
 
-namespace daos\mysql;
+declare(strict_types=1);
 
-use helpers\Configuration;
+namespace Selfoss\daos\mysql;
+
 use Monolog\Logger;
+use Selfoss\daos\CommonSqlDatabase;
+use Selfoss\helpers\DatabaseConnection;
+use Selfoss\helpers\StringKeyedArray;
 
 /**
  * Base class for database access -- mysql
@@ -12,41 +16,37 @@ use Monolog\Logger;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Database implements \daos\DatabaseInterface {
-    /** @var Configuration configuration */
-    private $configuration;
-
-    /** @var \DB\SQL database connection */
-    private $connection;
-
-    /** @var Logger */
-    private $logger;
+final class Database implements \Selfoss\daos\DatabaseInterface {
+    use CommonSqlDatabase;
 
     /**
      * establish connection and
      * create undefined tables
-     *
-     * @return void
      */
-    public function __construct(Configuration $configuration, \DB\SQL $connection, Logger $logger) {
-        $this->configuration = $configuration;
-        $this->connection = $connection;
-        $this->logger = $logger;
+    public function __construct(
+        private DatabaseConnection $connection,
+        private Logger $logger
+    ) {
+        $this->logger->debug('Establishing MySQL database connection');
 
-        $this->logger->debug('Established database connection');
+        $this->migrate();
+    }
 
+    private function migrate(): void {
         // create tables if necessary
         $result = @$this->exec('SHOW TABLES');
         $tables = [];
         foreach ($result as $table) {
-            foreach ($table as $key => $value) {
+            foreach ($table as $value) {
                 $tables[] = $value;
             }
         }
 
-        if (!in_array($this->configuration->dbPrefix . 'items', $tables, true)) {
+        if (!in_array($this->connection->getTableNamePrefix() . 'items', $tables, true)) {
+            $this->logger->debug('Creating items table');
+
             $this->exec('
-                CREATE TABLE ' . $this->configuration->dbPrefix . 'items (
+                CREATE TABLE ' . $this->connection->getTableNamePrefix() . 'items (
                     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY ,
                     datetime DATETIME NOT NULL ,
                     title TEXT NOT NULL ,
@@ -65,14 +65,14 @@ class Database implements \daos\DatabaseInterface {
             ');
             $this->exec('
                 CREATE TRIGGER insert_updatetime_trigger
-                BEFORE INSERT ON ' . $this->configuration->dbPrefix . 'items FOR EACH ROW
+                BEFORE INSERT ON ' . $this->connection->getTableNamePrefix() . 'items FOR EACH ROW
                     BEGIN
                         SET NEW.updatetime = NOW();
                     END;
             ');
             $this->exec('
                 CREATE TRIGGER update_updatetime_trigger
-                BEFORE UPDATE ON ' . $this->configuration->dbPrefix . 'items FOR EACH ROW
+                BEFORE UPDATE ON ' . $this->connection->getTableNamePrefix() . 'items FOR EACH ROW
                     BEGIN
                         SET NEW.updatetime = NOW();
                     END;
@@ -80,9 +80,11 @@ class Database implements \daos\DatabaseInterface {
         }
 
         $isNewestSourcesTable = false;
-        if (!in_array($this->configuration->dbPrefix . 'sources', $tables, true)) {
+        if (!in_array($this->connection->getTableNamePrefix() . 'sources', $tables, true)) {
+            $this->logger->debug('Creating sources table');
+
             $this->exec('
-                CREATE TABLE ' . $this->configuration->dbPrefix . 'sources (
+                CREATE TABLE ' . $this->connection->getTableNamePrefix() . 'sources (
                     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY ,
                     title TEXT NOT NULL ,
                     tags TEXT,
@@ -98,19 +100,21 @@ class Database implements \daos\DatabaseInterface {
         }
 
         // version 1 or new
-        if (!in_array($this->configuration->dbPrefix . 'version', $tables, true)) {
+        if (!in_array($this->connection->getTableNamePrefix() . 'version', $tables, true)) {
+            $this->logger->debug('Upgrading database schema to version 8 from initial state');
+
             $this->exec('
-                CREATE TABLE ' . $this->configuration->dbPrefix . 'version (
+                CREATE TABLE ' . $this->connection->getTableNamePrefix() . 'version (
                     version INT
                 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;
             ');
 
             $this->exec('
-                INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (8);
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (8);
             ');
 
             $this->exec('
-                CREATE TABLE ' . $this->configuration->dbPrefix . 'tags (
+                CREATE TABLE ' . $this->connection->getTableNamePrefix() . 'tags (
                     tag         TEXT NOT NULL,
                     color       VARCHAR(7) NOT NULL
                 ) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;
@@ -118,190 +122,236 @@ class Database implements \daos\DatabaseInterface {
 
             if ($isNewestSourcesTable === false) {
                 $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'sources ADD tags TEXT;
+                    ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'sources ADD tags TEXT;
                 ');
-            }
-        } else {
-            $version = @$this->exec('SELECT version FROM ' . $this->configuration->dbPrefix . 'version ORDER BY version DESC LIMIT 0, 1');
-            $version = $version[0]['version'];
-
-            if (strnatcmp($version, '3') < 0) {
-                $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'sources ADD lastupdate INT;
-                ');
-                $this->exec('
-                    INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (3);
-                ');
-            }
-            if (strnatcmp($version, '4') < 0) {
-                $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'items ADD updatetime DATETIME;
-                ');
-                $this->exec('
-                    CREATE TRIGGER insert_updatetime_trigger
-                    BEFORE INSERT ON ' . $this->configuration->dbPrefix . 'items FOR EACH ROW
-                        BEGIN
-                            SET NEW.updatetime = NOW();
-                        END;
-                ');
-                $this->exec('
-                    CREATE TRIGGER update_updatetime_trigger
-                    BEFORE UPDATE ON ' . $this->configuration->dbPrefix . 'items FOR EACH ROW
-                        BEGIN
-                            SET NEW.updatetime = NOW();
-                        END;
-                ');
-                $this->exec('
-                    INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (4);
-                ');
-            }
-            if (strnatcmp($version, '5') < 0) {
-                $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'items ADD author VARCHAR(255);
-                ');
-                $this->exec('
-                    INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (5);
-                ');
-            }
-            if (strnatcmp($version, '6') < 0) {
-                $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'sources ADD filter TEXT;
-                ');
-                $this->exec('
-                    INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (6);
-                ');
-            }
-            // Jump straight from v6 to v8 due to bug in previous version of the code
-            // in \daos\sqlite\Database which
-            // set the database version to "7" for initial installs.
-            if (strnatcmp($version, '8') < 0) {
-                $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'sources ADD lastentry INT;
-                ');
-                $this->exec('
-                    INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (8);
-                ');
-            }
-            if (strnatcmp($version, '9') < 0) {
-                $this->exec('
-                    ALTER TABLE ' . $this->configuration->dbPrefix . 'items ADD shared BOOL;
-                ');
-                $this->exec('
-                    INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (9);
-                ');
-            }
-            if (strnatcmp($version, '10') < 0) {
-                $this->exec([
-                    'ALTER TABLE `' . $this->configuration->dbPrefix . 'items` CONVERT TO CHARACTER SET utf8mb4;',
-                    'ALTER TABLE `' . $this->configuration->dbPrefix . 'sources` CONVERT TO CHARACTER SET utf8mb4;',
-                    'ALTER TABLE `' . $this->configuration->dbPrefix . 'tags` CONVERT TO CHARACTER SET utf8mb4;',
-                    'ALTER TABLE `' . $this->configuration->dbPrefix . 'version` CONVERT TO CHARACTER SET utf8mb4;',
-                    'INSERT INTO `' . $this->configuration->dbPrefix . 'version` (version) VALUES (10);',
-                ]);
-            }
-            if (strnatcmp($version, '11') < 0) {
-                $this->exec([
-                    'DROP TRIGGER insert_updatetime_trigger',
-                    'DROP TRIGGER update_updatetime_trigger',
-                    'ALTER TABLE ' . $this->configuration->dbPrefix . 'items ADD lastseen DATETIME',
-                    'UPDATE ' . $this->configuration->dbPrefix . 'items SET lastseen = CURRENT_TIMESTAMP',
-                    // Needs to be a trigger since MySQL before 5.6.5 does not support default value for DATETIME.
-                    // https://dev.mysql.com/doc/relnotes/mysql/5.6/en/news-5-6-5.html#mysqld-5-6-5-data-types
-                    // Needs to be a single trigger due to MySQL before 5.7.2 not supporting multiple triggers for the same event on the same table.
-                    // https://dev.mysql.com/doc/relnotes/mysql/5.7/en/news-5-7-2.html#mysqld-5-7-2-triggers
-                    'CREATE TRIGGER ' . $this->configuration->dbPrefix . 'items_insert_trigger
-                        BEFORE INSERT ON ' . $this->configuration->dbPrefix . 'items FOR EACH ROW
-                            BEGIN
-                                SET NEW.updatetime = NOW();
-                                SET NEW.lastseen = NOW();
-                            END;',
-                    'CREATE TRIGGER ' . $this->configuration->dbPrefix . 'items_update_trigger
-                        BEFORE UPDATE ON ' . $this->configuration->dbPrefix . 'items FOR EACH ROW
-                        BEGIN
-                            IF (
-                                OLD.unread <> NEW.unread OR
-                                OLD.starred <> NEW.starred
-                            ) THEN
-                                SET NEW.updatetime = NOW();
-                            END IF;
-                        END;',
-                    'INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (11)',
-                ]);
-            }
-            if (strnatcmp($version, '12') < 0) {
-                $this->exec([
-                    'UPDATE ' . $this->configuration->dbPrefix . 'items SET updatetime = datetime WHERE updatetime IS NULL',
-                    'ALTER TABLE ' . $this->configuration->dbPrefix . 'items MODIFY updatetime DATETIME NOT NULL',
-                    'ALTER TABLE ' . $this->configuration->dbPrefix . 'items MODIFY lastseen DATETIME NOT NULL',
-                    'INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (12)',
-                ]);
-            }
-            if (strnatcmp($version, '13') < 0) {
-                $this->exec([
-                    'UPDATE ' . $this->configuration->dbPrefix . "sources SET spout = 'spouts\\\\rss\\\\fulltextrss' WHERE spout = 'spouts\\\\rss\\\\instapaper'",
-                    'INSERT INTO ' . $this->configuration->dbPrefix . 'version (version) VALUES (13)',
-                ]);
             }
         }
-    }
 
-    public function exec($cmds, $args = null) {
-        return $this->connection->exec($cmds, $args);
-    }
+        $version = $this->getSchemaVersion();
 
-    /**
-     * wrap insert statement to return id
-     *
-     * @param string $query sql statement
-     * @param array $params sql params
-     *
-     * @return int id after insert
-     */
-    public function insert($query, array $params) {
-        $this->exec($query, $params);
-        $res = $this->exec('SELECT LAST_INSERT_ID() as lastid');
+        if ($version < 3) {
+            $this->logger->debug('Upgrading database schema to version 3');
 
-        return (int) $res[0]['lastid'];
-    }
+            $this->exec('
+                ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'sources ADD lastupdate INT;
+            ');
+            $this->exec('
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (3);
+            ');
+        }
+        if ($version < 4) {
+            $this->logger->debug('Upgrading database schema to version 4');
 
-    public function quote($value, $type = \PDO::PARAM_STR) {
-        return $this->connection->quote($value, $type);
-    }
+            $this->exec('
+                ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'items ADD updatetime DATETIME;
+            ');
+            $this->exec('
+                CREATE TRIGGER insert_updatetime_trigger
+                BEFORE INSERT ON ' . $this->connection->getTableNamePrefix() . 'items FOR EACH ROW
+                    BEGIN
+                        SET NEW.updatetime = NOW();
+                    END;
+            ');
+            $this->exec('
+                CREATE TRIGGER update_updatetime_trigger
+                BEFORE UPDATE ON ' . $this->connection->getTableNamePrefix() . 'items FOR EACH ROW
+                    BEGIN
+                        SET NEW.updatetime = NOW();
+                    END;
+            ');
+            $this->exec('
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (4);
+            ');
+        }
+        if ($version < 5) {
+            $this->logger->debug('Upgrading database schema to version 5');
 
-    /**
-     * Begin SQL transaction
-     *
-     * @return bool
-     */
-    public function begin() {
-        return $this->connection->begin();
-    }
+            $this->exec('
+                ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'items ADD author VARCHAR(255);
+            ');
+            $this->exec('
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (5);
+            ');
+        }
+        if ($version < 6) {
+            $this->logger->debug('Upgrading database schema to version 6');
 
-    /**
-     * Rollback SQL transaction
-     *
-     * @return bool
-     */
-    public function rollback() {
-        return $this->connection->rollback();
-    }
+            $this->exec('
+                ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'sources ADD filter TEXT;
+            ');
+            $this->exec('
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (6);
+            ');
+        }
+        // Jump straight from v6 to v8 due to bug in previous version of the code
+        // in \Selfoss\daos\sqlite\Database which
+        // set the database version to "7" for initial installs.
+        if ($version < 8) {
+            $this->logger->debug('Upgrading database schema to version 8');
 
-    /**
-     * Commit SQL transaction
-     *
-     * @return bool
-     */
-    public function commit() {
-        return $this->connection->commit();
+            $this->exec('
+                ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'sources ADD lastentry INT;
+            ');
+            $this->exec('
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (8);
+            ');
+        }
+        if ($version < 9) {
+            $this->logger->debug('Upgrading database schema to version 9');
+
+            $this->exec('
+                ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'items ADD shared BOOL;
+            ');
+            $this->exec('
+                INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (9);
+            ');
+        }
+        if ($version < 10) {
+            $this->logger->debug('Upgrading database schema to version 10');
+
+            $this->exec('ALTER TABLE `' . $this->connection->getTableNamePrefix() . 'items` CONVERT TO CHARACTER SET utf8mb4;');
+            $this->exec('ALTER TABLE `' . $this->connection->getTableNamePrefix() . 'sources` CONVERT TO CHARACTER SET utf8mb4;');
+            $this->exec('ALTER TABLE `' . $this->connection->getTableNamePrefix() . 'tags` CONVERT TO CHARACTER SET utf8mb4;');
+            $this->exec('ALTER TABLE `' . $this->connection->getTableNamePrefix() . 'version` CONVERT TO CHARACTER SET utf8mb4;');
+            $this->exec('INSERT INTO `' . $this->connection->getTableNamePrefix() . 'version` (version) VALUES (10);');
+        }
+        if ($version < 11) {
+            $this->logger->debug('Upgrading database schema to version 11');
+
+            $this->exec('DROP TRIGGER insert_updatetime_trigger');
+            $this->exec('DROP TRIGGER update_updatetime_trigger');
+            $this->exec('ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'items ADD lastseen DATETIME');
+            $this->exec('UPDATE ' . $this->connection->getTableNamePrefix() . 'items SET lastseen = CURRENT_TIMESTAMP');
+            // Needs to be a trigger since MySQL before 5.6.5 does not support default value for DATETIME.
+            // https://dev.mysql.com/doc/relnotes/mysql/5.6/en/news-5-6-5.html#mysqld-5-6-5-data-types
+            // Needs to be a single trigger due to MySQL before 5.7.2 not supporting multiple triggers for the same event on the same table.
+            // https://dev.mysql.com/doc/relnotes/mysql/5.7/en/news-5-7-2.html#mysqld-5-7-2-triggers
+            $this->exec('
+                CREATE TRIGGER ' . $this->connection->getTableNamePrefix() . 'items_insert_trigger
+                    BEFORE INSERT ON ' . $this->connection->getTableNamePrefix() . 'items FOR EACH ROW
+                        BEGIN
+                            SET NEW.updatetime = NOW();
+                            SET NEW.lastseen = NOW();
+                        END;
+            ');
+            $this->exec('
+                CREATE TRIGGER ' . $this->connection->getTableNamePrefix() . 'items_update_trigger
+                    BEFORE UPDATE ON ' . $this->connection->getTableNamePrefix() . 'items FOR EACH ROW
+                    BEGIN
+                        IF (
+                            OLD.unread <> NEW.unread OR
+                            OLD.starred <> NEW.starred
+                        ) THEN
+                            SET NEW.updatetime = NOW();
+                        END IF;
+                    END;
+            ');
+            $this->exec('INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (11)');
+        }
+        if ($version < 12) {
+            $this->logger->debug('Upgrading database schema to version 12');
+
+            $this->exec('UPDATE ' . $this->connection->getTableNamePrefix() . 'items SET updatetime = datetime WHERE updatetime IS NULL');
+            $this->exec('ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'items MODIFY updatetime DATETIME NOT NULL');
+            $this->exec('ALTER TABLE ' . $this->connection->getTableNamePrefix() . 'items MODIFY lastseen DATETIME NOT NULL');
+            $this->exec('INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (12)');
+        }
+        if ($version < 13) {
+            $this->logger->debug('Upgrading database schema to version 13');
+
+            $this->beginTransaction();
+            $this->exec('UPDATE ' . $this->connection->getTableNamePrefix() . "sources SET spout = 'spouts\\\\rss\\\\fulltextrss' WHERE spout = 'spouts\\\\rss\\\\instapaper'");
+            $this->exec('INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (13)');
+            $this->commit();
+        }
+        if ($version < 14) {
+            $this->logger->debug('Upgrading database schema to version 14');
+
+            $this->beginTransaction();
+            $this->exec('UPDATE ' . $this->connection->getTableNamePrefix() . "items SET author = NULL WHERE author = ''");
+            $this->exec('INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (14)');
+            $this->commit();
+        }
+        if ($version < 15) {
+            $this->logger->debug('Upgrading database schema to version 15 by ensuring all tags have colors');
+
+            $this->beginTransaction();
+
+            /** @var StringKeyedArray<bool> */
+            $coloredTags = new StringKeyedArray();
+            /** @var StringKeyedArray<string> */
+            $coloredTagsNormalised = new StringKeyedArray();
+            /** @var StringKeyedArray<string> */
+            $tagsWithoutColor = new StringKeyedArray();
+
+            $tags = $this->exec('SELECT tag, LOWER(tag) as normal FROM ' . $this->connection->getTableNamePrefix() . 'tags');
+            foreach ($tags as $tag) {
+                $coloredTags[$tag['tag']] = true;
+                $coloredTagsNormalised[$tag['normal']] = $tag['tag'];
+            }
+
+            $sources = $this->exec('SELECT id, tags, LOWER(tags) as normal FROM ' . $this->connection->getTableNamePrefix() . 'sources');
+            foreach ($sources as $source) {
+                if ($source['tags'] === '') {
+                    continue;
+                }
+
+                $shouldUpdateSourceTags = false;
+
+                $sourceTags = explode(',', $source['tags']);
+                // For PHPStan: the lengths of the two arrays should be same, so there will be no nulls.
+                /** @var array<array{string, string}> */
+                $sourceTagPairs = array_map(
+                    null,
+                    $sourceTags,
+                    explode(',', $source['normal'])
+                );
+                foreach ($sourceTagPairs as $key => [$tag, $normal]) {
+                    // If the tag does not have associated color:
+                    if (!isset($coloredTags[$tag])) {
+                        // Try to match it to a differently-cased tag.
+                        if (isset($coloredTagsNormalised[$normal])) {
+                            $sourceTags[$key] = $coloredTagsNormalised[$normal];
+                            $shouldUpdateSourceTags = true;
+                        } else {
+                            // Otherwise mark it for assigning a color.
+                            $tagsWithoutColor[$normal] = $tag;
+                        }
+                    }
+                }
+
+                if ($shouldUpdateSourceTags) {
+                    $this->exec(
+                        'UPDATE ' . $this->connection->getTableNamePrefix() . 'sources SET tags = :tags WHERE id = :id',
+                        [
+                            'id' => $source['id'],
+                            'tags' => implode(',', $sourceTags),
+                        ]
+                    );
+                }
+            }
+
+            // Add color to all tags without one.
+            foreach ($tagsWithoutColor as $tag) {
+                $this->exec(
+                    'INSERT INTO ' . $this->connection->getTableNamePrefix() . 'tags(tag, color) VALUES (:tag, :color)',
+                    [
+                        'tag' => $tag,
+                        'color' => '#df1818',
+                    ]
+                );
+            }
+
+            $this->exec('INSERT INTO ' . $this->connection->getTableNamePrefix() . 'version (version) VALUES (15)');
+            $this->commit();
+        }
     }
 
     /**
      * optimize database by
      * database own optimize statement
-     *
-     * @return void
      */
-    public function optimize() {
-        @$this->exec('OPTIMIZE TABLE `' . $this->configuration->dbPrefix . 'sources`, `' . $this->configuration->dbPrefix . 'items`');
+    public function optimize(): void {
+        @$this->exec('OPTIMIZE TABLE `' . $this->connection->getTableNamePrefix() . 'sources`, `' . $this->connection->getTableNamePrefix() . 'items`');
     }
 }

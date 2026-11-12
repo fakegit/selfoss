@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\rss;
 
 /**
@@ -12,25 +14,22 @@ namespace spouts\rss;
  * @author     Daniel Seither <post@tiwoc.de>
  */
 class lightreading extends fulltextrss {
-    /** @var string name of spout */
-    public $name = '[English] lightreading.com';
+    public string $name = '[English] lightreading.com';
 
-    /** @var string description of this source type */
-    public $description = 'Fetch Lightreading news with full content (not only the header as content).';
+    public string $description = 'Fetch Lightreading news with full content (not only the header as content).';
 
-    /** @var array configurable parameters */
-    public $params = [];
+    public array $params = [];
 
     /**
      * addresses of feeds for the sections
      */
-    private $feedUrl = 'http://www.lightreading.com/rss_simple.asp';
+    private const FEED_URL = 'http://www.lightreading.com/rss_simple.asp';
 
-    public function load(array $params) {
+    public function load(array $params): void {
         parent::load(['url' => $this->getXmlUrl($params)]);
     }
 
-    public function getXmlUrl(array $params) {
-        return $this->feedUrl;
+    public function getXmlUrl(array $params): string {
+        return self::FEED_URL;
     }
 }

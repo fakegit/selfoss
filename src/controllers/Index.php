@@ -1,11 +1,16 @@
 <?php
 
-namespace controllers;
+declare(strict_types=1);
 
-use Base;
-use helpers\Authentication;
-use helpers\View;
-use helpers\ViewHelper;
+namespace Selfoss\controllers;
+
+use Bramus\Router\Router;
+use Selfoss\daos;
+use Selfoss\daos\ItemOptions;
+use Selfoss\helpers\Authentication;
+use Selfoss\helpers\StringKeyedArray;
+use Selfoss\helpers\View;
+use Selfoss\helpers\ViewHelper;
 
 /**
  * Controller for root
@@ -14,101 +19,69 @@ use helpers\ViewHelper;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Index {
-    /** @var Authentication authentication helper */
-    private $authentication;
-
-    /** @var \daos\Items items */
-    private $itemsDao;
-
-    /** @var \controllers\Sources sources controller */
-    private $sourcesController;
-
-    /** @var \daos\Sources sources */
-    private $sourcesDao;
-
-    /** @var \controllers\Tags tags controller */
-    private $tagsController;
-
-    /** @var \daos\Tags tags */
-    private $tagsDao;
-
-    /** @var View view helper */
-    private $view;
-
-    /** @var ViewHelper */
-    private $viewHelper;
-
-    public function __construct(Authentication $authentication, \daos\Items $itemsDao, Sources $sourcesController, \daos\Sources $sourcesDao, Tags $tagsController, \daos\Tags $tagsDao, View $view, ViewHelper $viewHelper) {
-        $this->authentication = $authentication;
-        $this->itemsDao = $itemsDao;
-        $this->sourcesController = $sourcesController;
-        $this->sourcesDao = $sourcesDao;
-        $this->tagsController = $tagsController;
-        $this->tagsDao = $tagsDao;
-        $this->view = $view;
-        $this->viewHelper = $viewHelper;
+final readonly class Index {
+    public function __construct(
+        private Authentication $authentication,
+        private daos\Items $itemsDao,
+        private Router $router,
+        private daos\Sources $sourcesDao,
+        private Tags $tagsController,
+        private daos\Tags $tagsDao,
+        private View $view,
+        private ViewHelper $viewHelper
+    ) {
     }
 
     /**
      * home site
      * json
-     *
-     * @param Base $f3 fatfree base instance
-     *
-     * @return void
      */
-    public function home(Base $f3) {
+    public function home(): void {
         $options = $_GET;
 
-        if (!$f3->ajax()) {
+        if (!$this->view->isAjax()) {
             $home = BASEDIR . '/public/index.html';
-            if (!file_exists($home)) {
+            if (!file_exists($home) || ($homeData = file_get_contents($home)) === false) { // For PHPStan: Error will be already handled by global error handler.
                 http_response_code(500);
-                echo 'Please build the assets using `npm run build` or obtain a pre-built packages from https://selfoss.aditu.de.';
+                echo 'Please build the client assets using `npm run build` or obtain a pre-built packages from https://selfoss.aditu.de.';
                 exit;
             }
 
             // show as full html page
-            readfile($home);
+            echo str_replace('@basePath@', $this->router->getBasePath(), $homeData);
 
             return;
         }
 
-        $this->authentication->needsLoggedInOrPublicMode();
-
-        // get search param
-        $search = null;
-        if (isset($options['search']) && strlen($options['search']) > 0) {
-            $search = $options['search'];
-        }
+        $this->authentication->ensureCanRead();
 
         // load tags
         $tags = $this->tagsDao->getWithUnread();
 
         // load items
-        $items = $this->loadItems($options, $tags, $search);
+        $items = $this->loadItems($options, $tags);
 
         // load stats
         $stats = $this->itemsDao->stats();
-        $this->view->statsAll = $stats['total'];
-        $this->view->statsUnread = $stats['unread'];
-        $this->view->statsStarred = $stats['starred'];
+        $statsAll = $stats['total'];
+        $statsUnread = $stats['unread'];
+        $statsStarred = $stats['starred'];
 
         foreach ($tags as $tag) {
-            if (strpos($tag['tag'], '#') !== 0) {
+            if (!str_starts_with($tag['tag'], '#')) {
                 continue;
             }
-            $this->view->statsUnread -= $tag['unread'];
+            $statsUnread -= $tag['unread'];
         }
 
+        $lastUpdate = $this->itemsDao->lastUpdate();
         $result = [
-            'lastUpdate' => \helpers\ViewHelper::date_iso8601($this->itemsDao->lastUpdate()),
+            'lastUpdate' => $lastUpdate?->format(\DateTime::ATOM),
             'hasMore' => $items['hasMore'],
             'entries' => $items['entries'],
-            'all' => $this->view->statsAll,
-            'unread' => $this->view->statsUnread,
-            'starred' => $this->view->statsStarred,
+            'all' => $statsAll,
+            'unread' => $statsUnread,
+            'starred' => $statsStarred,
             'tags' => $tags,
         ];
 
@@ -123,16 +96,38 @@ class Index {
     /**
      * load items
      *
-     * @param array $params request parameters
-     * @param array $tags information about tags
-     * @param ?string $search optional search query
+     * @param array<string, mixed> $params request parameters
+     * @param array<array{tag: string, color: string, unread: int}> $tags information about tags
      *
-     * @return array{entries: array, hasMore: bool} html with items
+     * @return array{
+     *     entries: array<array{
+     *         id: int,
+     *         title: string,
+     *         strippedTitle: string,
+     *         content: string,
+     *         unread: bool,
+     *         starred: bool,
+     *         source: int,
+     *         thumbnail: string,
+     *         icon: string,
+     *         uid: string,
+     *         link: string,
+     *         wordCount: int,
+     *         lengthWithoutTags: int,
+     *         datetime: string,
+     *         updatetime: string,
+     *         sourcetitle: string,
+     *         author: string,
+     *         tags: StringKeyedArray<array{backColor: string, foreColor: string}>,
+     *     }>,
+     *     hasMore: bool,
+     * } html with items
      */
-    private function loadItems(array $params, array $tags, $search = null) {
+    private function loadItems(array $params, array $tags): array {
+        $options = new ItemOptions($params);
         $entries = [];
-        foreach ($this->itemsDao->get($params) as $item) {
-            $entries[] = $this->viewHelper->preprocessEntry($item, $this->tagsController, $tags, $search);
+        foreach ($this->itemsDao->get($options) as $item) {
+            $entries[] = $this->viewHelper->preprocessEntry($item, $this->tagsController, $tags, $options->search);
         }
 
         return [

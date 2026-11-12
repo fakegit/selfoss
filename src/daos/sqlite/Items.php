@@ -1,6 +1,8 @@
 <?php
 
-namespace daos\sqlite;
+declare(strict_types=1);
+
+namespace Selfoss\daos\sqlite;
 
 /**
  * Class for accessing persistent saved items -- sqlite
@@ -10,7 +12,7 @@ namespace daos\sqlite;
  * @author     Harald Lapp <harald.lapp@gmail.com>
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Items extends \daos\mysql\Items {
+final class Items extends \Selfoss\daos\mysql\Items {
     /** @var class-string SQL helper */
-    protected static $stmt = Statements::class;
+    protected static string $stmt = Statements::class;
 }

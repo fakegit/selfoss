@@ -1,8 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace spouts\github;
 
-use helpers\WebClient;
+use Selfoss\helpers\HtmlString;
+use Selfoss\helpers\WebClient;
+use spouts\Item;
+use spouts\Parameter;
 
 /**
  * Spout for fetching from GitHub
@@ -11,128 +16,125 @@ use helpers\WebClient;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  * @author     Tim Gerundt <tim@gerundt.de>
+ *
+ * @phpstan-type Commit array{commit: array{message: string, author: array{date: string, name: string}}, sha: string, html_url: string}
+ * @phpstan-type GhParams array{owner: string, repo: string, branch: string}
+ *
+ * @extends \spouts\spout<null>
  */
 class commits extends \spouts\spout {
-    use \helpers\ItemsIterator;
+    public string $name = 'GitHub: commits';
 
-    /** @var string name of source */
-    public $name = 'GitHub: commits';
+    public string $description = 'List commits on a repository.';
 
-    /** @var string description of this source type */
-    public $description = 'List commits on a repository.';
-
-    /** @var array configurable parameters */
-    public $params = [
+    public array $params = [
         'owner' => [
             'title' => 'Owner',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'repo' => [
             'title' => 'Repository',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
         'branch' => [
             'title' => 'Branch',
-            'type' => 'text',
+            'type' => Parameter::TYPE_TEXT,
             'default' => '',
             'required' => true,
-            'validation' => ['notempty'],
+            'validation' => [Parameter::VALIDATION_NONEMPTY],
         ],
     ];
 
-    /** @var string global html url for the source */
-    protected $htmlUrl = '';
+    /** Title of the source */
+    protected ?string $title = null;
 
-    /** @var string URL of the favicon */
-    protected $faviconUrl = 'https://assets-cdn.github.com/favicon.ico';
+    /** Global html url for the source */
+    protected string $htmlUrl = '';
 
-    /** @var WebClient */
-    private $webClient;
+    /** URL of the favicon */
+    protected string $faviconUrl = 'https://assets-cdn.github.com/favicon.ico';
 
-    public function __construct(WebClient $webClient) {
-        $this->webClient = $webClient;
+    /** @var Commit[] current fetched items */
+    private array $items = [];
+
+    public function __construct(
+        private readonly WebClient $webClient
+    ) {
     }
 
     //
     // Source Methods
     //
 
-    public function load(array $params) {
+    /**
+     * @param GhParams $params
+     */
+    public function load(array $params): void {
         $this->htmlUrl = 'https://github.com/' . urlencode($params['owner']) . '/' . urlencode($params['repo']) . '/' . urlencode($params['branch']);
 
+        // https://docs.github.com/en/rest/commits/commits#list-commits
         $jsonUrl = 'https://api.github.com/repos/' . urlencode($params['owner']) . '/' . urlencode($params['repo']) . '/commits?sha=' . urlencode($params['branch']);
 
         $http = $this->webClient->getHttpClient();
         $response = $http->get($jsonUrl);
-        $this->items = json_decode((string) $response->getBody(), true);
+        $items = json_decode((string) $response->getBody(), true);
+        $this->items = $items ?? [];
 
-        $this->spoutTitle = "Recent Commits to {$params['repo']}:{$params['branch']}";
+        $this->title = "Recent Commits to {$params['repo']}:{$params['branch']}";
     }
 
-    public function getHtmlUrl() {
+    public function getTitle(): ?string {
+        return $this->title;
+    }
+
+    public function getHtmlUrl(): ?string {
         return $this->htmlUrl;
     }
 
-    public function getId() {
-        if ($this->items !== null && $this->valid()) {
-            return @current($this->items)['sha'];
-        }
-
-        return null;
-    }
-
-    public function getTitle() {
-        if ($this->items !== null && $this->valid()) {
-            $message = @current($this->items)['commit']['message'];
-
-            return htmlspecialchars(self::cutTitle($message));
-        }
-
-        return null;
-    }
-
-    public function getContent() {
-        if ($this->items !== null && $this->valid()) {
-            $message = @current($this->items)['commit']['message'];
-
-            return nl2br(htmlspecialchars($message), false);
-        }
-
-        return null;
-    }
-
-    public function getIcon() {
+    public function getIcon(): ?string {
         return $this->faviconUrl;
     }
 
-    public function getLink() {
-        if ($this->items !== null && $this->valid()) {
-            return @current($this->items)['html_url'];
-        }
+    /**
+     * @return \Generator<Item<null>> list of items
+     */
+    public function getItems(): iterable {
+        foreach ($this->items as $item) {
+            $message = $item['commit']['message'];
 
-        return null;
+            $id = $item['sha'];
+            $title = HtmlString::fromPlainText(self::cutTitle($message));
+            $content = HtmlString::fromRaw(nl2br(htmlspecialchars($message), false));
+            $thumbnail = null;
+            $icon = null;
+            $link = $item['html_url'];
+            // Appears to be ISO 8601.
+            $date = new \DateTimeImmutable($item['commit']['author']['date']);
+            $author = $item['commit']['author']['name'];
+
+            yield new Item(
+                id: $id,
+                title: $title,
+                content: $content,
+                thumbnail: $thumbnail,
+                icon: $icon,
+                link: $link,
+                date: $date,
+                author: $author,
+                extraData: null,
+            );
+        }
     }
 
-    public function getDate() {
-        if ($this->items !== null && $this->valid()) {
-            $date = date('Y-m-d H:i:s', strtotime(@current($this->items)['commit']['author']['date']));
-        }
-        if (strlen($date) === 0) {
-            $date = date('Y-m-d H:i:s');
-        }
-
-        return $date;
-    }
-
-    public function destroy() {
+    public function destroy(): void {
         unset($this->items);
-        $this->items = null;
+        $this->items = [];
     }
 
     /**
@@ -143,8 +145,9 @@ class commits extends \spouts\spout {
      *
      * @return string Cutted title
      */
-    public static function cutTitle($title, $cutafter = 69) {
-        $title = strtok($title, "\n");
+    public static function cutTitle(string $title, int $cutafter = 69): string {
+        // strtok returns false for empty string.
+        $title = strtok($title, "\n") ?: '';
         if (($cutafter > 0) && (strlen($title) > $cutafter)) {
             return substr($title, 0, $cutafter) . '…';
         }

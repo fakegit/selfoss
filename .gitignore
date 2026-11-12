@@ -1,4 +1,4 @@
-/assets/.parcel-cache
+/client/.parcel-cache
 /data/favicons/*.png
 /data/favicons/*.jpg
 /data/thumbnails/*.png
@@ -7,12 +7,15 @@
 /data/logs/*.log
 /data/sqlite/*.db
 /public
-docs/public
+docs/public/
+docs/static/processed_images/
 user.css
 user.js
 *.ini
 node_modules
 .env
+phpstan.neon
 vendor/
-.php_cs.cache
+.php-cs-fixer.cache
 __pycache__
+.direnv/

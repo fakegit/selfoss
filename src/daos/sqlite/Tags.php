@@ -1,6 +1,8 @@
 <?php
 
-namespace daos\sqlite;
+declare(strict_types=1);
+
+namespace Selfoss\daos\sqlite;
 
 /**
  * Class for accessing persistent saved sources -- mysql
@@ -9,7 +11,7 @@ namespace daos\sqlite;
  * @license    GPLv3 (https://www.gnu.org/licenses/gpl-3.0.html)
  * @author     Tobias Zeising <tobias.zeising@aditu.de>
  */
-class Tags extends \daos\mysql\Tags {
+final class Tags extends \Selfoss\daos\mysql\Tags {
     /** @var class-string SQL helper */
-    protected static $stmt = Statements::class;
+    protected static string $stmt = Statements::class;
 }

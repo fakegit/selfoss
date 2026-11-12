@@ -1,6 +1,0 @@
-parameters:
-    bootstrapFiles:
-        - src/constants.php
-
-    ignoreErrors:
-        - '(Call to an undefined static method F3::([sg]et|error|reroute)\(\))'

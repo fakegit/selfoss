@@ -1,65 +1,53 @@
 <?php
 
-namespace helpers\Storage;
+declare(strict_types=1);
+
+namespace Selfoss\helpers\Storage;
 
 use Monolog\Logger;
 
 /**
  * Simple file storage.
  */
-class FileStorage {
-    /** @var Logger */
-    private $logger;
-
-    /** @var string Directory where the files will be stored */
-    private $directory;
-
-    /**
-     * @param string $directory
-     */
-    public function __construct(Logger $logger, $directory) {
-        $this->logger = $logger;
-        $this->directory = $directory;
+final readonly class FileStorage {
+    public function __construct(
+        private Logger $logger,
+        /** Directory where the files will be stored */
+        private string $directory
+    ) {
     }
 
     /**
      * Store given blob with type $extension as URL.
-     *
-     * @param string $url
-     * @param string $extension
-     * @param string $blob
-     *
-     * @return ?string
      */
-    public function store($url, $extension, $blob) {
+    public function store(string $url, string $extension, string $blob): ?string {
         $filename = md5($url) . '.' . $extension;
         $path = $this->directory . '/' . $filename;
         $written = @file_put_contents($path, $blob);
 
         if ($written !== false) {
             return $filename;
-        } else {
-            $this->logger->warning('Unable to store file: ' . $url . '. Please check permissions of ' . $this->directory);
-
-            return null;
         }
+
+        $this->logger->warning('Unable to store file: ' . $url . '. Please check permissions of ' . $this->directory);
+
+        return null;
     }
 
     /**
      * Delete all files except for requested ones.
      *
      * @param callable(string):bool $shouldKeep
-     *
-     * @return void
      */
-    public function cleanup($shouldKeep) {
-        $itemPath = $this->directory . '/';
+    public function cleanup(callable $shouldKeep): void {
         $undeleted = [];
-        foreach (scandir($itemPath) as $file) {
-            if (is_file($itemPath . $file) && $file !== '.htaccess') {
-                if (!$shouldKeep($file)) {
-                    if (!@unlink($itemPath . $file)) {
-                        $undeleted[] = $itemPath . $file;
+        foreach (new \DirectoryIterator($this->directory) as $fileInfo) {
+            $name = $fileInfo->getFilename();
+            if ($fileInfo->isFile() && $name !== '.htaccess') {
+                if (!$shouldKeep($name)) {
+                    $path = $fileInfo->getPathname();
+                    if (!@unlink($path)) {
+                        $undeleted[] = $path;
                     }
                 }
             }

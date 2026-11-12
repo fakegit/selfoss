@@ -1,0 +1,40 @@
+parameters:
+    level: 8
+
+    paths:
+        - src/
+        - tests/
+        - cliupdate.php
+        - index.php
+        - run.php
+
+
+    fileExtensions:
+        - php
+        - phtml
+
+    bootstrapFiles:
+        - src/constants.php
+        - vendor/bin/.phpunit/phpunit/vendor/autoload.php
+
+    stubFiles:
+        - utils/PHPStan/Stubs/Container.stub
+        - utils/PHPStan/Stubs/ContainerInterface.stub
+        - utils/PHPStan/Stubs/IcoFileLoader.stub
+
+    typeAliases:
+        SpoutParameterInfo: 'array{title: string, type: spouts\Parameter::TYPE_*, default: string, required: bool, validation: array<spouts\Parameter::VALIDATION_*>, values?: array<string, string>}'
+        SpoutParameters: 'array<string, SpoutParameterInfo>'
+
+    ignoreErrors:
+        -
+            message: '#^Method Selfoss\\helpers\\Database\\PdoSqliteFactory\:\:create\(\) should return PDO but returns Pdo\\Sqlite\.$#'
+            identifier: return.type
+            count: 1
+            path: src/helpers/Database/PdoSqliteFactory.php
+            # Only reported on PHP < 8.4
+            reportUnmatched: false
+
+
+includes:
+    - vendor/phpstan/phpstan-deprecation-rules/rules.neon
